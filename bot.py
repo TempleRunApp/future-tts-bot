@@ -207,7 +207,7 @@ def merge_ogg(parts):
         p = os.path.join(d, f"{k}.ogg"); open(p, "wb").write(b); names.append(p)
     lst = os.path.join(d, "l.txt"); open(lst, "w").write("".join(f"file '{n}'\n" for n in names))
     out = os.path.join(d, "o.ogg")
-    r = subprocess.run(["ffmpeg","-v","error","-f","concat","-safe","0","-i",lst,"-c:a","libopus","-b:a","48k","-ar","48000",out], capture_output=True)
+    r = subprocess.run(["ffmpeg","-v","error","-f","concat","-safe","0","-i",lst,"-c","copy",out], capture_output=True)
     if r.returncode: raise RuntimeError("merge")
     return open(out, "rb").read()
 

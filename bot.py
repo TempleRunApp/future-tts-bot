@@ -44,15 +44,15 @@ def tg(method, **p):
     except Exception:
         return {"ok":False}
 
-def tg_voice(chat_id, ogg, caption, reply_to):
+def tg_voice(chat_id, ogg, caption, reply_to, ext="ogg", ct="audio/ogg"):
     b = uuid.uuid4().hex
     parts = []
     def f(n, v): parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{n}"\r\n\r\n{v}\r\n'.encode())
     f("chat_id", chat_id); f("caption", caption); f("reply_to_message_id", reply_to); f("allow_sending_without_reply","true")
-    parts.append(f'--{b}\r\nContent-Disposition: form-data; name="voice"; filename="tts.ogg"\r\nContent-Type: audio/ogg\r\n\r\n'.encode()+ogg+b"\r\n")
+    parts.append((f'--{b}\r\nContent-Disposition: form-data; name="voice"; filename="tts.{ext}"\r\nContent-Type: {ct}\r\n\r\n').encode()+ogg+b"\r\n")
     parts.append(f"--{b}--\r\n".encode())
     r = urllib.request.Request(API+"sendVoice", b"".join(parts), {"Content-Type":f"multipart/form-data; boundary={b}"})
-    try: return json.load(urllib.request.urlopen(r, timeout=60))
+    try: return json.load(urllib.request.urlopen(r, timeout=180))
     except Exception as e: return {"ok":False,"err":str(e)}
 
 import edge_tts
@@ -233,16 +233,21 @@ def speak(chat_id, uid, text, mid):
         tg("sendMessage", chat_id=chat_id, text=f"النص طويل، هحول أول {MAXTOTAL} حرف بس.", reply_to_message_id=mid)
     if len(cs) > 2:
         tg("sendMessage", chat_id=chat_id, text="النص طويل، التحويل هياخد دقيقة أو اتنين. استنى لحظات.", reply_to_message_id=mid)
-    parts = []
+    items = []
     try:
         for n, c in enumerate(cs):
             tg("sendChatAction", chat_id=chat_id, action="record_voice")
-            raw, mime = one_chunk(c, s["voice"], s["style"], n == 0)
-            parts.append(to_ogg(raw, mime))
-        ogg = merge_ogg(parts)
+            items.append(one_chunk(c, s["voice"], s["style"], n == 0))
+        kinds = {("mp3" if "mpeg" in m else "pcm" if (r[:4] != b"RIFF") else "wav") for r, m in items}
+        if kinds == {"mp3"}:
+            data = b"".join(r for r, m in items); ext = "mp3"; ct = "audio/mpeg"
+        elif kinds == {"pcm"} and len({m for r, m in items}) == 1:
+            data = to_ogg(b"".join(r for r, m in items), items[0][1]); ext = "ogg"; ct = "audio/ogg"
+        else:
+            data = merge_ogg([to_ogg(r, m) for r, m in items]); ext = "ogg"; ct = "audio/ogg"
     except Exception:
         tg("sendMessage", chat_id=chat_id, text="حصلت مشكلة وقت التحويل، جرب تاني بعد شوية.", reply_to_message_id=mid); return
-    tg_voice(chat_id, ogg, f"{BRAND} | {disp(s['voice'])}", mid)
+    tg_voice(chat_id, data, f"{BRAND} | {disp(s['voice'])}", mid, ext, ct)
 
 pend = {}
 plock = threading.Lock()

@@ -136,9 +136,14 @@ def gate_msg(chat_id):
     rows.append([{"text":"✅ تم الاشتراك، تحقق","callback_data":"chk"}])
     tg("sendMessage", chat_id=chat_id, text=f"أهلاً بك في بوت تحويل النص إلى صوت من {BRAND}.\nعشان تستخدم البوت لازم تشترك في القناة الأول، وبعدها اضغط زر التحقق.", reply_markup={"inline_keyboard":rows})
 
-HELP = (f"أهلاً بك في بوت {BRAND} لتحويل النص إلى صوت.\n"
- "ابعت أي نص بالعربي أو أي لغة وهرجعه لك رسالة صوتية.\n\n"
- "/voice لاختيار الصوت\n/style لاختيار طريقة الإلقاء\n/help للمساعدة")
+HELP = ("\U0001F399 أهلاً بك في بوت تقنيات المستقبل لتحويل النص إلى كلام\n\n"
+ "ابعت أي نص بالعربي أو أي لغة، وهرجعه لك رسالة صوتية.\n\n"
+ "\U0001F539 /voice اختيار الصوت (أكتر من 340 صوت عربي وعالمي)\n"
+ "\U0001F539 /style اختيار طريقة الإلقاء\n"
+ "\U0001F539 /help المساعدة\n\n"
+ "\U0001F4E2 انضم لمجتمع تقنيات المستقبل:\n"
+ "تيليجرام: https://t.me/euvsugxaj\n"
+ "واتساب: https://chat.whatsapp.com/Lc80q70aLPTGel7wv8G0dh?s=cl&p=a&iam=2")
 
 def disp(vid):
     if vid.startswith("g:"): return "Gemini "+vid[2:]

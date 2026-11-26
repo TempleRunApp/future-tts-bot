@@ -154,6 +154,7 @@ def disp(vid):
     if vid.startswith("q:"):
         lg, vn = vid[2:].split("-", 1); return "Groq " + vn
     if vid.startswith("g:"): return "Gemini "+vid[2:]
+    if vid.startswith("x:"): return "ElevenLabs " + ELEVEN_VOICES.get(vid[2:], "").split(" ")[0]
     v = EDGE.get(vid[2:]); return (v["ShortName"] if v else vid[2:])
 ARC = {"EG":"مصر","SA":"السعودية","AE":"الإمارات","KW":"الكويت","QA":"قطر","BH":"البحرين","OM":"عمان","JO":"الأردن","LB":"لبنان","SY":"سوريا","IQ":"العراق","YE":"اليمن","LY":"ليبيا","TN":"تونس","DZ":"الجزائر","MA":"المغرب","PS":"فلسطين","SD":"السودان"}
 def kb_rows(items, per=2):
@@ -179,6 +180,7 @@ def edge_label(k,v):
 def voice_kb(lang):
     its=[{"text":"⭐ أصوات Gemini الطبيعية","callback_data":"G:"+lang}]
     if GROQ_KEYS and lang in GROQ_VOICES: its.append({"text":"🎙 أصوات Groq" + (" (لهجة سعودية)" if lang=="ar" else ""),"callback_data":"Q:"+lang})
+    if ELEVEN_KEYS: its.append({"text":"🎧 أصوات ElevenLabs (إنجليزي أساسًا)","callback_data":"X:"+lang})
     its+=[{"text":edge_label(k,v),"callback_data":"v:e:"+k} for k,v in EDGE.items() if k.startswith(lang+"-")]
     return {"inline_keyboard":kb_rows(its[:90],1)+[[{"text":"رجوع لاختيار اللغة","callback_data":"lp:0"}]]}
 def gem_kb(lang):
@@ -230,6 +232,38 @@ def groq_tts(text, lang, voice):
         except Exception as e:
             last = str(e)
     raise RuntimeError(last)
+ELEVEN_KEYS = [k.strip() for k in os.environ.get("ELEVEN_API_KEY", "").split(",") if k.strip()]
+ELEVEN_USER_Q = int(os.environ.get("ELEVEN_USER_DAILY_CHARS", "200"))
+ELEVEN_GLOBAL_Q = int(os.environ.get("ELEVEN_GLOBAL_DAILY_CHARS", "330"))
+ELEVEN_VOICES = {"CwhRBWXzGAHq8TQ4Fs17":"Roger (رجل)","JBFqnCBsd6RMkjVDRZzb":"George (رجل)","nPczCjzI2devNBz1zQrb":"Brian (رجل)","onwK4e9ZLuTAKqWW03F9":"Daniel (رجل)","cjVigY5qzO86Huf0OWal":"Eric (رجل)","pqHfZKP75CvOlQylNhV4":"Bill (رجل)","EXAVITQu4vr4xnSDxMaL":"Sarah (امرأة)","XrExE9yKIg1WjnnlVkGX":"Matilda (امرأة)","pFZP5JQG7iQjIQuC4Bku":"Lily (امرأة)","Xb7hH8MSUJpSbSDYk0k2":"Alice (امرأة)","cgSgspJ2msm6clMCkdW9":"Jessica (امرأة)","hpp4J3VqNfWAUOO0d1Us":"Bella (امرأة)"}
+_ei = [0]
+eusage = {"day": "", "u": {}, "g": 0}
+def eleven_tts(text, vid):
+    last = None
+    for _ in range(len(ELEVEN_KEYS)):
+        key = ELEVEN_KEYS[_ei[0] % len(ELEVEN_KEYS)]
+        body = {"text": text, "model_id": "eleven_multilingual_v2"}
+        r = urllib.request.Request(f"https://api.elevenlabs.io/v1/text-to-speech/{vid}?output_format=mp3_44100_64", json.dumps(body).encode(),
+                                   {"Content-Type": "application/json", "xi-api-key": key, "User-Agent": "futuretts/1.0"})
+        try:
+            return urllib.request.urlopen(r, timeout=90).read(), "audio/mpeg"
+        except urllib.error.HTTPError as e:
+            last = str(e.code)
+            if e.code in (401, 402, 403, 429): _ei[0] += 1
+        except Exception as e:
+            last = str(e)
+    raise RuntimeError(last)
+def eleven_ok(uid, n):
+    d = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7200))
+    if eusage["day"] != d: eusage.update(day=d, u={}, g=0)
+    if not ELEVEN_KEYS: return "off"
+    if ELEVEN_USER_Q and eusage["u"].get(uid, 0) + n > ELEVEN_USER_Q: return "user"
+    if ELEVEN_GLOBAL_Q and eusage["g"] + n > ELEVEN_GLOBAL_Q*len(ELEVEN_KEYS): return "global"
+    return None
+def eleven_add(uid, n): eusage["u"][uid] = eusage["u"].get(uid, 0) + n; eusage["g"] += n
+def eleven_kb(lang):
+    its=[{"text":lab,"callback_data":"v:x:"+k} for k,lab in ELEVEN_VOICES.items()]
+    return {"inline_keyboard":kb_rows(its,2)+[[{"text":"رجوع لأصوات اللغة","callback_data":"L:"+lang}]]}
 gusage = {"day": "", "u": {}, "g": 0}
 def groq_ok(uid, n):
     d = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7200))
@@ -294,7 +328,7 @@ def speak(chat_id, uid, text, mid):
         tg("sendMessage", chat_id=chat_id, text="النص طويل، التحويل هياخد دقيقة أو اتنين. استنى لحظات.", reply_to_message_id=mid)
     items = []
     vid = s["voice"]; total = sum(len(c) for c in cs); counted = False
-    gcount = False
+    gcount = False; ecount = False
     if vid.startswith("q:"):
         why = groq_ok(uid, total)
         if why:
@@ -311,6 +345,20 @@ def speak(chat_id, uid, text, mid):
             except Exception:
                 items = []; vid = edge_fallback(s); cs = chunks(text[:MAXTOTAL])
                 tg("sendMessage", chat_id=chat_id, text="أصوات Groq مش متاحة دلوقتي، هحول بصوت Edge.", reply_to_message_id=mid)
+    elif vid.startswith("x:"):
+        why = eleven_ok(uid, total)
+        if why:
+            vid = edge_fallback(s)
+            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات ElevenLabs، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات ElevenLabs وصلت للحد اليومي للبوت كله، فهحول بصوت Edge. جرب تاني بكرة."), reply_to_message_id=mid)
+        else:
+            try:
+                for c in cs:
+                    tg("sendChatAction", chat_id=chat_id, action="record_voice")
+                    items.append(eleven_tts(c, vid[2:]))
+                ecount = True
+            except Exception:
+                items = []; vid = edge_fallback(s)
+                tg("sendMessage", chat_id=chat_id, text="أصوات ElevenLabs مش متاحة دلوقتي، هحول بصوت Edge.", reply_to_message_id=mid)
     elif vid.startswith("g:"):
         why = gem_ok(uid, total)
         if why:
@@ -324,6 +372,7 @@ def speak(chat_id, uid, text, mid):
                 items.append(one_chunk(c, vid, s["style"], n == 0))
         if counted: gem_add(uid, total)
         if gcount: groq_add(uid, total)
+        if ecount: eleven_add(uid, total)
         kinds = {("mp3" if "mpeg" in m else "pcm" if (r[:4] != b"RIFF") else "wav") for r, m in items}
         if kinds == {"mp3"}:
             data = b"".join(r for r, m in items); ext = "mp3"; ct = "audio/mpeg"
@@ -409,9 +458,11 @@ def on_cb(q):
         show(chat_id, "أصوات Gemini الطبيعية (بتقرا أي لغة):", gem_kb(d[2:]), q)
     elif d.startswith("Q:") and GROQ_KEYS and d[2:] in GROQ_VOICES:
         show(chat_id, "أصوات Groq (رصيدها اليومي صغير، ولما يخلص بحول بصوت Edge):", groq_kb(d[2:]), q)
+    elif d.startswith("X:") and ELEVEN_KEYS:
+        show(chat_id, "أصوات ElevenLabs (رصيدها اليومي صغير جدًا، ولما يخلص بحول بصوت Edge):", eleven_kb(d[2:]), q)
     elif d == "chv":
         show(chat_id, "اختار اللغة:", lang_kb(), q)
-    elif d.startswith("v:") and ((d[2:4]=="q:" and d[4:].split("-",1)[0] in GROQ_VOICES and d[4:].split("-",1)[-1] in GROQ_VOICES[d[4:].split("-",1)[0]][1]) or (d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="e:" and d[4:] in EDGE)):
+    elif d.startswith("v:") and ((d[2:4]=="q:" and d[4:].split("-",1)[0] in GROQ_VOICES and d[4:].split("-",1)[-1] in GROQ_VOICES[d[4:].split("-",1)[0]][1]) or (d[2:4]=="x:" and d[4:] in ELEVEN_VOICES) or (d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="e:" and d[4:] in EDGE)):
         s = st(uid); s["voice"] = d[2:]; s["chosen"] = True; save()
         show(chat_id, f"تم اختيار الصوت: {disp(d[2:])}\nدلوقتي ابعت النص اللي عايز تحوله لصوت. الاختيار ده هيفضل محفوظ للنصوص الجاية.", after_kb(), q)
     elif d.startswith("s:") and d[2:] in STYLES:

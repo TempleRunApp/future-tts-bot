@@ -138,7 +138,7 @@ def gate_msg(chat_id):
 
 HELP = ("\U0001F399 أهلاً بك في بوت تقنيات المستقبل لتحويل النص إلى كلام\n\n"
  "ابعت أي نص بالعربي أو أي لغة، وهرجعه لك رسالة صوتية.\n\n"
- "\U0001F539 /voice اختيار الصوت (أكتر من 340 صوت عربي وعالمي)\n"
+ "\U0001F539 /voice اختيار اللغة والصوت (أكتر من 340 صوت عربي وعالمي)\n"
  "\U0001F539 /style اختيار طريقة الإلقاء\n"
  "\U0001F539 /help المساعدة\n\n"
  "\U0001F4E2 انضم لمجتمع تقنيات المستقبل:\n"
@@ -148,28 +148,42 @@ HELP = ("\U0001F399 أهلاً بك في بوت تقنيات المستقبل ل
 def disp(vid):
     if vid.startswith("g:"): return "Gemini "+vid[2:]
     v = EDGE.get(vid[2:]); return (v["ShortName"] if v else vid[2:])
-def voice_root():
-    rows=[[{"text":"أصوات عربية (لهجات)","callback_data":"m:ar"}],
-          [{"text":"أصوات Gemini من جوجل","callback_data":"m:g"}],
-          [{"text":"لغات أخرى","callback_data":"m:l"}]]
-    return {"inline_keyboard":rows}
+ARC = {"EG":"مصر","SA":"السعودية","AE":"الإمارات","KW":"الكويت","QA":"قطر","BH":"البحرين","OM":"عمان","JO":"الأردن","LB":"لبنان","SY":"سوريا","IQ":"العراق","YE":"اليمن","LY":"ليبيا","TN":"تونس","DZ":"الجزائر","MA":"المغرب","PS":"فلسطين","SD":"السودان"}
 def kb_rows(items, per=2):
-    rows=[]
-    for i in range(0,len(items),per): rows.append(items[i:i+per])
-    return rows
-def menu(kind):
-    if kind=="g":
-        its=[{"text":f"{n} - {VOICES[n]}","callback_data":"v:g:"+n} for n in VOICES]
-    elif kind=="ar":
-        its=[{"text":f"{v['ShortName'].split('-')[1]} {v['ShortName'].split('-')[2].replace('Neural','')} ({'رجل' if v['Gender']=='Male' else 'امرأة'})","callback_data":"v:e:"+k} for k,v in EDGE.items() if k.startswith("ar-")]
-    elif kind=="l":
-        langs=sorted({k.split("-")[0] for k in EDGE if not k.startswith("ar-")}, key=lambda x:(x not in LANGNAMES,x))
-        its=[{"text":LANGNAMES.get(l,l),"callback_data":"m:l:"+l} for l in langs]
-    elif kind.startswith("l:"):
-        l=kind[2:]
-        its=[{"text":f"{k.split('-',1)[1].replace('Neural','')} ({'M' if v['Gender']=='Male' else 'F'})","callback_data":"v:e:"+k} for k,v in EDGE.items() if k.startswith(l+"-")]
-    else: its=[]
-    return {"inline_keyboard":kb_rows(its[:96])+[[{"text":"رجوع","callback_data":"m:root"}]]}
+    return [items[i:i+per] for i in range(0,len(items),per)]
+def lang_codes():
+    codes = sorted({k.split("-")[0] for k in EDGE})
+    main = [c for c in LANGNAMES if c in codes]
+    rest = [c for c in codes if c not in LANGNAMES]
+    return main, rest
+def lang_kb(page=0):
+    main, rest = lang_codes()
+    if page == 0:
+        its=[{"text":LANGNAMES[c],"callback_data":"L:"+c} for c in main]
+        if rest: its.append({"text":"لغات أخرى","callback_data":"lp:1"})
+        return {"inline_keyboard":kb_rows(its)}
+    its=[{"text":c,"callback_data":"L:"+c} for c in rest]
+    return {"inline_keyboard":kb_rows(its,3)+[[{"text":"رجوع للغات الأساسية","callback_data":"lp:0"}]]}
+def edge_label(k,v):
+    p=k.split("-"); name=p[2].replace("Neural","") if len(p)>2 else k
+    who="رجل" if v["Gender"]=="Male" else "امرأة"
+    if p[0]=="ar": return f"{name} - {ARC.get(p[1],p[1])} - {who}"
+    return f"{name} ({p[1]}) - {who}"
+def voice_kb(lang):
+    its=[{"text":"⭐ أصوات Gemini الطبيعية","callback_data":"G:"+lang}]
+    its+=[{"text":edge_label(k,v),"callback_data":"v:e:"+k} for k,v in EDGE.items() if k.startswith(lang+"-")]
+    return {"inline_keyboard":kb_rows(its[:90],1)+[[{"text":"رجوع لاختيار اللغة","callback_data":"lp:0"}]]}
+def gem_kb(lang):
+    its=[{"text":f"{n} - {VOICES[n]}","callback_data":"v:g:"+n} for n in VOICES]
+    return {"inline_keyboard":kb_rows(its,2)+[[{"text":"رجوع لأصوات اللغة","callback_data":"L:"+lang}]]}
+def after_kb():
+    return {"inline_keyboard":[[{"text":"تغيير الصوت","callback_data":"chv"},{"text":"تغيير اللغة","callback_data":"lp:0"}]]}
+def show(q_or_chat, text, kb, q=None):
+    if q:
+        r = tg("editMessageText", chat_id=q["message"]["chat"]["id"], message_id=q["message"]["message_id"], text=text, reply_markup=kb)
+        if r.get("ok"): return
+    tg("sendMessage", chat_id=q_or_chat, text=text, reply_markup=kb)
+LANG_PROMPT = "اختار اللغة اللي عايز تحول بيها النص لصوت:"
 def style_kb():
     return {"inline_keyboard":[[{"text":v[0],"callback_data":"s:"+k}] for k,v in STYLES.items()]}
 
@@ -209,35 +223,42 @@ def on_message(m):
         if ok is None:
             tg("sendMessage", chat_id=chat_id, text="البوت تحت الصيانة لحظات، جرب بعد شوية."); return
     cmd = text.split()[0].split("@")[0].lower() if text.startswith("/") else ""
-    if cmd in ("/start","/help"): tg("sendMessage", chat_id=chat_id, text=HELP)
-    elif cmd == "/voice": tg("sendMessage", chat_id=chat_id, text="اختار الصوت:", reply_markup=voice_root())
+    if cmd in ("/start","/help"):
+        tg("sendMessage", chat_id=chat_id, text=HELP)
+        tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
+    elif cmd in ("/voice","/language"): tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
     elif cmd == "/style": tg("sendMessage", chat_id=chat_id, text="اختار طريقة الإلقاء:", reply_markup=style_kb())
     elif cmd: tg("sendMessage", chat_id=chat_id, text=HELP)
     else:
         if limited(uid): tg("sendMessage", chat_id=chat_id, text="استنى دقيقة وجرب تاني."); return
+        if not st(uid).get("chosen"):
+            tg("sendMessage", chat_id=chat_id, text="الأول اختار اللغة والصوت:", reply_markup=lang_kb()); return
         speak(chat_id, uid, text, mid)
 
 def on_cb(q):
     uid = q["from"]["id"]; chat_id = q["message"]["chat"]["id"]; d = q.get("data","")
     if d == "chk":
         ok = is_member(uid)
-        if ok: tg("answerCallbackQuery", callback_query_id=q["id"], text="تم التحقق"); tg("sendMessage", chat_id=chat_id, text=HELP)
+        if ok: tg("answerCallbackQuery", callback_query_id=q["id"], text="تم التحقق"); tg("sendMessage", chat_id=chat_id, text=HELP); tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
         else: tg("answerCallbackQuery", callback_query_id=q["id"], text="لسه ما اشتركتش", show_alert=True)
         return
     if CHANNELS and not is_member(uid):
         tg("answerCallbackQuery", callback_query_id=q["id"], text="اشترك في القناة الأول", show_alert=True); return
-    if d.startswith("m:"):
-        k = d[2:]
-        tg("answerCallbackQuery", callback_query_id=q["id"])
-        if k=="root": tg("sendMessage", chat_id=chat_id, text="اختار الصوت:", reply_markup=voice_root())
-        else: tg("sendMessage", chat_id=chat_id, text="اختار:", reply_markup=menu(k))
+    tg("answerCallbackQuery", callback_query_id=q["id"])
+    if d.startswith("lp:"):
+        show(chat_id, LANG_PROMPT, lang_kb(int(d[3:] or 0)), q)
+    elif d.startswith("L:"):
+        l=d[2:]; s=st(uid); s["lang"]=l; save()
+        show(chat_id, f"اختار الصوت للغة {LANGNAMES.get(l,l)}:", voice_kb(l), q)
+    elif d.startswith("G:"):
+        show(chat_id, "أصوات Gemini الطبيعية (بتقرا أي لغة):", gem_kb(d[2:]), q)
+    elif d == "chv":
+        show(chat_id, "اختار اللغة:", lang_kb(), q)
     elif d.startswith("v:") and ((d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="e:" and d[4:] in EDGE)):
-        st(uid)["voice"] = d[2:]; save()
-        tg("answerCallbackQuery", callback_query_id=q["id"], text="تم اختيار الصوت")
-        tg("sendMessage", chat_id=chat_id, text=f"تم اختيار الصوت {disp(d[2:])}. ابعت النص.")
+        s = st(uid); s["voice"] = d[2:]; s["chosen"] = True; save()
+        show(chat_id, f"تم اختيار الصوت: {disp(d[2:])}\nدلوقتي ابعت النص اللي عايز تحوله لصوت. الاختيار ده هيفضل محفوظ للنصوص الجاية.", after_kb(), q)
     elif d.startswith("s:") and d[2:] in STYLES:
         st(uid)["style"] = d[2:]; save()
-        tg("answerCallbackQuery", callback_query_id=q["id"], text="تم")
         tg("sendMessage", chat_id=chat_id, text=f"تم اختيار طريقة الإلقاء: {STYLES[d[2:]][0]}.")
 
 class H(BaseHTTPRequestHandler):

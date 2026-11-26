@@ -117,7 +117,7 @@ def to_ogg(raw, mime):
     if p.returncode: raise RuntimeError("ffmpeg")
     return p.stdout
 
-def chunks(t):
+def chunks(t, MAXCH=MAXCH):
     out, cur = [], ""
     for para in t.replace("\r","").split("\n"):
         while len(para) > MAXCH:
@@ -151,6 +151,8 @@ HELP = ("\U0001F399 أهلاً بك في بوت تقنيات المستقبل ل
  "واتساب: https://chat.whatsapp.com/Lc80q70aLPTGel7wv8G0dh?s=cl&p=a&iam=2")
 
 def disp(vid):
+    if vid.startswith("q:"):
+        lg, vn = vid[2:].split("-", 1); return "Groq " + vn
     if vid.startswith("g:"): return "Gemini "+vid[2:]
     v = EDGE.get(vid[2:]); return (v["ShortName"] if v else vid[2:])
 ARC = {"EG":"مصر","SA":"السعودية","AE":"الإمارات","KW":"الكويت","QA":"قطر","BH":"البحرين","OM":"عمان","JO":"الأردن","LB":"لبنان","SY":"سوريا","IQ":"العراق","YE":"اليمن","LY":"ليبيا","TN":"تونس","DZ":"الجزائر","MA":"المغرب","PS":"فلسطين","SD":"السودان"}
@@ -176,10 +178,14 @@ def edge_label(k,v):
     return f"{name} ({p[1]}) - {who}"
 def voice_kb(lang):
     its=[{"text":"⭐ أصوات Gemini الطبيعية","callback_data":"G:"+lang}]
+    if GROQ_KEYS and lang in GROQ_VOICES: its.append({"text":"🎙 أصوات Groq" + (" (لهجة سعودية)" if lang=="ar" else ""),"callback_data":"Q:"+lang})
     its+=[{"text":edge_label(k,v),"callback_data":"v:e:"+k} for k,v in EDGE.items() if k.startswith(lang+"-")]
     return {"inline_keyboard":kb_rows(its[:90],1)+[[{"text":"رجوع لاختيار اللغة","callback_data":"lp:0"}]]}
 def gem_kb(lang):
     its=[{"text":f"{n} - {VOICES[n]}","callback_data":"v:g:"+n} for n in VOICES]
+    return {"inline_keyboard":kb_rows(its,2)+[[{"text":"رجوع لأصوات اللغة","callback_data":"L:"+lang}]]}
+def groq_kb(lang):
+    its=[{"text":lab,"callback_data":f"v:q:{lang}-{k}"} for k,lab in GROQ_VOICES[lang][1].items()]
     return {"inline_keyboard":kb_rows(its,2)+[[{"text":"رجوع لأصوات اللغة","callback_data":"L:"+lang}]]}
 def after_kb():
     return {"inline_keyboard":[[{"text":"تغيير الصوت","callback_data":"chv"},{"text":"تغيير اللغة","callback_data":"lp:0"}]]}
@@ -200,6 +206,59 @@ def limited(uid):
     d.append(now); return False
 
 MAXTOTAL = 15000
+USER_Q = int(os.environ.get("GEMINI_USER_DAILY_CHARS", "3000"))      # Gemini chars per user per day (0 = unlimited)
+GLOBAL_Q = int(os.environ.get("GEMINI_GLOBAL_DAILY_CHARS", "12000"))  # Gemini chars for all users per day (0 = unlimited)
+GROQ_KEYS = [k.strip() for k in os.environ.get("GROQ_API_KEY", "").split(",") if k.strip()]
+GROQ_USER_Q = int(os.environ.get("GROQ_USER_DAILY_CHARS", "600"))
+GROQ_GLOBAL_Q = int(os.environ.get("GROQ_GLOBAL_DAILY_CHARS", "3000"))
+GROQ_VOICES = {"ar": ("canopylabs/orpheus-arabic-saudi", {"abdullah":"عبدالله (رجل)","fahad":"فهد (رجل)","sultan":"سلطان (رجل)","lulwa":"لولوة (امرأة)","noura":"نورة (امرأة)","aisha":"عائشة (امرأة)"}),
+               "en": ("canopylabs/orpheus-v1-english", {"autumn":"Autumn (F)","diana":"Diana (F)","hannah":"Hannah (F)","austin":"Austin (M)","daniel":"Daniel (M)","troy":"Troy (M)"})}
+_gi = [0]
+def groq_tts(text, lang, voice):
+    model = GROQ_VOICES[lang][0]
+    last = None
+    for _ in range(len(GROQ_KEYS)):
+        key = GROQ_KEYS[_gi[0] % len(GROQ_KEYS)]
+        body = {"model": model, "input": text, "voice": voice, "response_format": "wav"}
+        r = urllib.request.Request("https://api.groq.com/openai/v1/audio/speech", json.dumps(body).encode(),
+                                   {"Content-Type": "application/json", "Authorization": "Bearer " + key, "User-Agent": "futuretts/1.0"})
+        try:
+            return urllib.request.urlopen(r, timeout=90).read(), "audio/wav"
+        except urllib.error.HTTPError as e:
+            last = str(e.code)
+            if e.code in (429, 403): _gi[0] += 1
+        except Exception as e:
+            last = str(e)
+    raise RuntimeError(last)
+gusage = {"day": "", "u": {}, "g": 0}
+def groq_ok(uid, n):
+    d = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7200))
+    if gusage["day"] != d: gusage.update(day=d, u={}, g=0)
+    if not GROQ_KEYS: return "off"
+    if GROQ_USER_Q and gusage["u"].get(uid, 0) + n > GROQ_USER_Q: return "user"
+    if GROQ_GLOBAL_Q and gusage["g"] + n > GROQ_GLOBAL_Q*len(GROQ_KEYS): return "global"
+    return None
+def groq_add(uid, n): gusage["u"][uid] = gusage["u"].get(uid, 0) + n; gusage["g"] += n
+usage = {"day": "", "u": {}, "g": 0}
+def _day():
+    d = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7200))
+    if usage["day"] != d: usage.update(day=d, u={}, g=0)
+def gem_ok(uid, n):
+    _day()
+    if USER_Q and usage["u"].get(uid, 0) + n > USER_Q: return "user"
+    if GLOBAL_Q and usage["g"] + n > GLOBAL_Q*len(GKEYS): return "global"
+    return None
+def gem_add(uid, n):
+    _day(); usage["u"][uid] = usage["u"].get(uid, 0) + n; usage["g"] += n
+def edge_fallback(s):
+    l = s.get("lang") or "ar"
+    if l == "ar": return "e:ar-EG-SalmaNeural"
+    for k in EDGE:
+        if k.startswith(l + "-"): return "e:" + k
+    return "e:ar-EG-SalmaNeural"
+def quota_text(uid):
+    _day(); left = max(0, USER_Q - usage["u"].get(uid, 0)) if USER_Q else None
+    return ("رصيدك النهارده من أصوات Gemini: " + (f"{left} حرف متبقي من {USER_Q}." if left is not None else "غير محدود.") + "\nأصوات Edge مفتوحة بدون حد. الرصيد بيتجدد كل يوم.")
 def merge_ogg(parts):
     if len(parts) == 1: return parts[0]
     d = tempfile.mkdtemp(); names = []
@@ -228,16 +287,43 @@ def one_chunk(c, vid, style, allow_fb):
 def speak(chat_id, uid, text, mid):
     s = st(uid)
     text = text.strip()
-    cs = chunks(text[:MAXTOTAL])
+    cs = chunks(text[:MAXTOTAL], 190 if s["voice"].startswith("q:") else MAXCH)
     if len(text) > MAXTOTAL:
         tg("sendMessage", chat_id=chat_id, text=f"النص طويل، هحول أول {MAXTOTAL} حرف بس.", reply_to_message_id=mid)
     if len(cs) > 2:
         tg("sendMessage", chat_id=chat_id, text="النص طويل، التحويل هياخد دقيقة أو اتنين. استنى لحظات.", reply_to_message_id=mid)
     items = []
+    vid = s["voice"]; total = sum(len(c) for c in cs); counted = False
+    gcount = False
+    if vid.startswith("q:"):
+        why = groq_ok(uid, total)
+        if why:
+            vid = edge_fallback(s)
+            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات Groq، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات Groq وصلت للحد اليومي للبوت كله، فهحول بصوت Edge. جرب Groq تاني بكرة."), reply_to_message_id=mid)
+            cs = chunks(text[:MAXTOTAL])
+        else:
+            try:
+                lg, vn = vid[2:].split("-", 1)
+                for c in cs:
+                    tg("sendChatAction", chat_id=chat_id, action="record_voice")
+                    items.append(groq_tts(c, lg, vn)); time.sleep(0.5)
+                gcount = True
+            except Exception:
+                items = []; vid = edge_fallback(s); cs = chunks(text[:MAXTOTAL])
+                tg("sendMessage", chat_id=chat_id, text="أصوات Groq مش متاحة دلوقتي، هحول بصوت Edge.", reply_to_message_id=mid)
+    elif vid.startswith("g:"):
+        why = gem_ok(uid, total)
+        if why:
+            vid = edge_fallback(s)
+            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات Gemini، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات Gemini وصلت للحد اليومي للبوت كله، فهحول بصوت Edge. جرب Gemini تاني بكرة."), reply_to_message_id=mid)
+        else: counted = True
     try:
-        for n, c in enumerate(cs):
-            tg("sendChatAction", chat_id=chat_id, action="record_voice")
-            items.append(one_chunk(c, s["voice"], s["style"], n == 0))
+        if not items:
+            for n, c in enumerate(cs):
+                tg("sendChatAction", chat_id=chat_id, action="record_voice")
+                items.append(one_chunk(c, vid, s["style"], n == 0))
+        if counted: gem_add(uid, total)
+        if gcount: groq_add(uid, total)
         kinds = {("mp3" if "mpeg" in m else "pcm" if (r[:4] != b"RIFF") else "wav") for r, m in items}
         if kinds == {"mp3"}:
             data = b"".join(r for r, m in items); ext = "mp3"; ct = "audio/mpeg"
@@ -247,7 +333,7 @@ def speak(chat_id, uid, text, mid):
             data = merge_ogg([to_ogg(r, m) for r, m in items]); ext = "ogg"; ct = "audio/ogg"
     except Exception:
         tg("sendMessage", chat_id=chat_id, text="حصلت مشكلة وقت التحويل، جرب تاني بعد شوية.", reply_to_message_id=mid); return
-    tg_voice(chat_id, data, f"{BRAND} | {disp(s['voice'])}", mid, ext, ct)
+    tg_voice(chat_id, data, f"{BRAND} | {disp(vid)}", mid, ext, ct)
 
 pend = {}
 plock = threading.Lock()
@@ -285,6 +371,7 @@ def on_message(m):
     if cmd in ("/start","/help"):
         tg("sendMessage", chat_id=chat_id, text=HELP)
         tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
+    elif cmd == "/quota": tg("sendMessage", chat_id=chat_id, text=quota_text(uid))
     elif cmd in ("/voice","/language"): tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
     elif cmd == "/style": tg("sendMessage", chat_id=chat_id, text="اختار طريقة الإلقاء:", reply_markup=style_kb())
     elif cmd: tg("sendMessage", chat_id=chat_id, text=HELP)
@@ -320,9 +407,11 @@ def on_cb(q):
         show(chat_id, f"اختار الصوت للغة {LANGNAMES.get(l,l)}:", voice_kb(l), q)
     elif d.startswith("G:"):
         show(chat_id, "أصوات Gemini الطبيعية (بتقرا أي لغة):", gem_kb(d[2:]), q)
+    elif d.startswith("Q:") and GROQ_KEYS and d[2:] in GROQ_VOICES:
+        show(chat_id, "أصوات Groq (رصيدها اليومي صغير، ولما يخلص بحول بصوت Edge):", groq_kb(d[2:]), q)
     elif d == "chv":
         show(chat_id, "اختار اللغة:", lang_kb(), q)
-    elif d.startswith("v:") and ((d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="e:" and d[4:] in EDGE)):
+    elif d.startswith("v:") and ((d[2:4]=="q:" and d[4:].split("-",1)[0] in GROQ_VOICES and d[4:].split("-",1)[-1] in GROQ_VOICES[d[4:].split("-",1)[0]][1]) or (d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="e:" and d[4:] in EDGE)):
         s = st(uid); s["voice"] = d[2:]; s["chosen"] = True; save()
         show(chat_id, f"تم اختيار الصوت: {disp(d[2:])}\nدلوقتي ابعت النص اللي عايز تحوله لصوت. الاختيار ده هيفضل محفوظ للنصوص الجاية.", after_kb(), q)
     elif d.startswith("s:") and d[2:] in STYLES:

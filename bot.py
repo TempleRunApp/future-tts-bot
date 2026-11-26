@@ -31,7 +31,7 @@ def save():
     try: json.dump(state, open(SF, "w"))
     except Exception: pass
 def st(uid):
-    return state.setdefault(str(uid), {"voice":"e:ar-EG-SalmaNeural","style":"normal"})
+    return state.setdefault(str(uid), {"voice":"g:Kore","style":"normal"})
 
 def tg(method, **p):
     data = json.dumps(p).encode()

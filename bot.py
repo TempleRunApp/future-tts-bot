@@ -199,7 +199,7 @@ def limited(uid):
     if len(d) >= PER_MIN: return True
     d.append(now); return False
 
-MAXTOTAL = 10000
+MAXTOTAL = 15000
 def merge_ogg(parts):
     if len(parts) == 1: return parts[0]
     d = tempfile.mkdtemp(); names = []
@@ -244,12 +244,33 @@ def speak(chat_id, uid, text, mid):
         tg("sendMessage", chat_id=chat_id, text="حصلت مشكلة وقت التحويل، جرب تاني بعد شوية.", reply_to_message_id=mid); return
     tg_voice(chat_id, ogg, f"{BRAND} | {disp(s['voice'])}", mid)
 
+pend = {}
+plock = threading.Lock()
+def queue_text(chat_id, uid, text, mid):
+    # join consecutive messages (Telegram splits long texts at 4096 chars) into one audio
+    with plock:
+        e = pend.get(uid)
+        if e is None:
+            e = pend[uid] = {"parts": [], "mid": mid, "chat": chat_id}
+        e["parts"].append(text); e["n"] = e.get("n", 0) + 1; n = e["n"]
+    def fire():
+        time.sleep(3)
+        with plock:
+            e = pend.get(uid)
+            if not e or e["n"] != n: return
+            pend.pop(uid, None)
+        speak(e["chat"], uid, "\n".join(e["parts"]), e["mid"])
+    threading.Thread(target=fire, daemon=True).start()
+
 def on_message(m):
     chat_id = m["chat"]["id"]; uid = m["from"]["id"]; mid = m["message_id"]
     if m["chat"].get("type") != "private": return
     text = m.get("text")
+    doc = m.get("document")
+    if not text and doc and (doc.get("mime_type","").startswith("text/") or doc.get("file_name","").lower().endswith(".txt")) and doc.get("file_size",0) < 200000:
+        text = "\x00DOC"
     if not text:
-        tg("sendMessage", chat_id=chat_id, text="ابعت نص عشان أحوله لصوت."); return
+        tg("sendMessage", chat_id=chat_id, text="ابعت نص أو ملف txt عشان أحوله لصوت."); return
     if CHANNELS:
         ok = is_member(uid)
         if ok is False or ok is None and False: gate_msg(chat_id); return
@@ -266,7 +287,16 @@ def on_message(m):
         if limited(uid): tg("sendMessage", chat_id=chat_id, text="استنى دقيقة وجرب تاني."); return
         if not st(uid).get("chosen"):
             tg("sendMessage", chat_id=chat_id, text="الأول اختار اللغة والصوت:", reply_markup=lang_kb()); return
-        speak(chat_id, uid, text, mid)
+        if text == "\x00DOC":
+            r = tg("getFile", file_id=doc["file_id"])
+            try:
+                raw = urllib.request.urlopen(f"https://api.telegram.org/file/bot{TOKEN}/"+r["result"]["file_path"], timeout=30).read()
+                text = raw.decode("utf-8", "ignore")
+            except Exception:
+                tg("sendMessage", chat_id=chat_id, text="ما قدرتش أقرا الملف."); return
+            if not text.strip(): return
+            speak(chat_id, uid, text, mid); return
+        queue_text(chat_id, uid, text, mid)
 
 def on_cb(q):
     uid = q["from"]["id"]; chat_id = q["message"]["chat"]["id"]; d = q.get("data","")

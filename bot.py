@@ -70,7 +70,12 @@ def edge_tts_run(text, voice, style):
         async for ch in c.stream():
             if ch["type"] == "audio": b += ch["data"]
         return b
-    b = asyncio.run(go())
+    b = b""
+    for _ in range(3):
+        try: b = asyncio.run(go())
+        except Exception: b = b""
+        if b: break
+        time.sleep(1)
     if not b: raise RuntimeError("empty")
     return b, "audio/mpeg"
 LANGNAMES = {"ar":"العربية","en":"English","fr":"Français","de":"Deutsch","es":"Español","tr":"Türkçe","it":"Italiano","ru":"Русский","fa":"فارسی","ur":"اردو","hi":"हिन्दी","pt":"Português","id":"Indonesia","zh":"中文","ja":"日本語","ko":"한국어"}
@@ -194,22 +199,50 @@ def limited(uid):
     if len(d) >= PER_MIN: return True
     d.append(now); return False
 
+MAXTOTAL = 10000
+def merge_ogg(parts):
+    if len(parts) == 1: return parts[0]
+    d = tempfile.mkdtemp(); names = []
+    for k, b in enumerate(parts):
+        p = os.path.join(d, f"{k}.ogg"); open(p, "wb").write(b); names.append(p)
+    lst = os.path.join(d, "l.txt"); open(lst, "w").write("".join(f"file '{n}'\n" for n in names))
+    out = os.path.join(d, "o.ogg")
+    r = subprocess.run(["ffmpeg","-v","error","-f","concat","-safe","0","-i",lst,"-c:a","libopus","-b:a","48k","-ar","48000",out], capture_output=True)
+    if r.returncode: raise RuntimeError("merge")
+    return open(out, "rb").read()
+
+def one_chunk(c, vid, style, allow_fb):
+    gstyle = STYLES[style][1]
+    if vid.startswith("e:"):
+        try: return edge_tts_run(c, vid[2:], style)
+        except Exception:
+            if not allow_fb: raise
+            return gemini_tts(c, "Kore", gstyle)
+    for attempt in range(3):
+        try: return gemini_tts(c, vid[2:], gstyle)
+        except Exception:
+            time.sleep(8 if attempt < 2 else 0)
+    if not allow_fb: raise RuntimeError("gemini")
+    return edge_tts_run(c, "ar-EG-SalmaNeural", style)
+
 def speak(chat_id, uid, text, mid):
     s = st(uid)
-    tg("sendChatAction", chat_id=chat_id, action="record_voice")
-    for c in chunks(text)[:5]:
-        try:
-            vid = s["voice"]
-            if vid.startswith("e:"):
-                try: raw, mime = edge_tts_run(c, vid[2:], s["style"])
-                except Exception: raw, mime = gemini_tts(c, "Kore", STYLES[s["style"]][1])
-            else:
-                try: raw, mime = gemini_tts(c, vid[2:] if vid[:2]=="g:" else vid, STYLES[s["style"]][1])
-                except Exception: raw, mime = edge_tts_run(c, "ar-EG-SalmaNeural", s["style"])
-            ogg = to_ogg(raw, mime)
-        except Exception:
-            tg("sendMessage", chat_id=chat_id, text="حصلت مشكلة وقت التحويل، جرب تاني بعد شوية.", reply_to_message_id=mid); return
-        tg_voice(chat_id, ogg, f"{BRAND} | {disp(s['voice'])}", mid)
+    text = text.strip()
+    cs = chunks(text[:MAXTOTAL])
+    if len(text) > MAXTOTAL:
+        tg("sendMessage", chat_id=chat_id, text=f"النص طويل، هحول أول {MAXTOTAL} حرف بس.", reply_to_message_id=mid)
+    if len(cs) > 2:
+        tg("sendMessage", chat_id=chat_id, text="النص طويل، التحويل هياخد دقيقة أو اتنين. استنى لحظات.", reply_to_message_id=mid)
+    parts = []
+    try:
+        for n, c in enumerate(cs):
+            tg("sendChatAction", chat_id=chat_id, action="record_voice")
+            raw, mime = one_chunk(c, s["voice"], s["style"], n == 0)
+            parts.append(to_ogg(raw, mime))
+        ogg = merge_ogg(parts)
+    except Exception:
+        tg("sendMessage", chat_id=chat_id, text="حصلت مشكلة وقت التحويل، جرب تاني بعد شوية.", reply_to_message_id=mid); return
+    tg_voice(chat_id, ogg, f"{BRAND} | {disp(s['voice'])}", mid)
 
 def on_message(m):
     chat_id = m["chat"]["id"]; uid = m["from"]["id"]; mid = m["message_id"]

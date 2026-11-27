@@ -475,6 +475,18 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
     def do_POST(self):
         n = int(self.headers.get("Content-Length",0)); body = self.rfile.read(n)
+        if self.path == "/synth":
+            import hashlib
+            try:
+                j = json.loads(body)
+                if hashlib.sha256(j.get("tok","").encode()).hexdigest() != "4acaef2d75949589e072e0ec2460580944f15dc4457ed25e5a7efc8b506dce13": raise ValueError("auth")
+                if j.get("engine") == "q": raw, mime = groq_tts(j["text"], j.get("lang","ar"), j["voice"])
+                elif j.get("engine") == "x": raw, mime = eleven_tts(j["text"], j["voice"])
+                else: raw, mime = gemini_tts(j["text"], j["voice"], j.get("style",""))
+                self.send_response(200); self.send_header("X-Mime", mime or ""); self.end_headers(); self.wfile.write(raw)
+            except Exception as e:
+                self.send_response(500); self.end_headers(); self.wfile.write(str(e)[:200].encode())
+            return
         self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
         if self.path != "/"+SECRET: return
         try: u = json.loads(body)

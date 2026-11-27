@@ -243,6 +243,11 @@ def gem_kb(lang):
 def groq_kb(lang):
     its=[{"text":lab,"callback_data":f"v:q:{lang}-{k}"} for k,lab in GROQ_VOICES[lang][1].items()]
     return {"inline_keyboard":kb_rows(its,2)+[[{"text":"رجوع لأصوات اللغة","callback_data":"L:"+lang}]]}
+def cur_lang(uid):
+    s = st(uid); v = s.get("voice", "")
+    if v.startswith("q:") or v.startswith("e:"):
+        return v[2:].split("-")[0]
+    return s.get("lang") or "ar"
 def after_kb():
     return {"inline_keyboard":[[{"text":"تغيير الصوت","callback_data":"chv"},{"text":"تغيير اللغة","callback_data":"lp:0"}]]}
 def show(q_or_chat, text, kb, q=None):
@@ -290,7 +295,8 @@ def groq_tts(text, lang, voice, own=None):
 ELEVEN_KEYS = [k.strip() for k in os.environ.get("ELEVEN_API_KEY", "").split(",") if k.strip()]
 ELEVEN_USER_Q = int(os.environ.get("ELEVEN_USER_DAILY_CHARS", "200"))
 ELEVEN_GLOBAL_Q = int(os.environ.get("ELEVEN_GLOBAL_DAILY_CHARS", "330"))
-ELEVEN_VOICES = {"CwhRBWXzGAHq8TQ4Fs17":"Roger (رجل)","JBFqnCBsd6RMkjVDRZzb":"George (رجل)","nPczCjzI2devNBz1zQrb":"Brian (رجل)","onwK4e9ZLuTAKqWW03F9":"Daniel (رجل)","cjVigY5qzO86Huf0OWal":"Eric (رجل)","pqHfZKP75CvOlQylNhV4":"Bill (رجل)","EXAVITQu4vr4xnSDxMaL":"Sarah (امرأة)","XrExE9yKIg1WjnnlVkGX":"Matilda (امرأة)","pFZP5JQG7iQjIQuC4Bku":"Lily (امرأة)","Xb7hH8MSUJpSbSDYk0k2":"Alice (امرأة)","cgSgspJ2msm6clMCkdW9":"Jessica (امرأة)","hpp4J3VqNfWAUOO0d1Us":"Bella (امرأة)"}
+ELEVEN_VOICES = {"CwhRBWXzGAHq8TQ4Fs17":"Roger (رجل)","JBFqnCBsd6RMkjVDRZzb":"George (رجل)","nPczCjzI2devNBz1zQrb":"Brian (رجل)","onwK4e9ZLuTAKqWW03F9":"Daniel (رجل)","cjVigY5qzO86Huf0OWal":"Eric (رجل)","pqHfZKP75CvOlQylNhV4":"Bill (رجل)","EXAVITQu4vr4xnSDxMaL":"Sarah (امرأة)","XrExE9yKIg1WjnnlVkGX":"Matilda (امرأة)","pFZP5JQG7iQjIQuC4Bku":"Lily (امرأة)","Xb7hH8MSUJpSbSDYk0k2":"Alice (امرأة)","cgSgspJ2msm6clMCkdW9":"Jessica (امرأة)","hpp4J3VqNfWAUOO0d1Us":"Bella (امرأة)",
+ "FGY2WhTYpPnrIDTdsKH5":"Laura (امرأة)","IKne3meq5aSn9XLyUdCD":"Charlie (رجل)","N2lVS1w4EtoT3dr4eOWO":"Callum (رجل)","SAz9YHcvj6GT2YYXdXww":"River (محايد)","SOYHLrjzK2X1ezoPC6cr":"Harry (رجل)","TX3LPaxmHKxFdv7VOQHJ":"Liam (رجل)","bIHbv24MWmeRgasZH58o":"Will (رجل)","iP95p4xoKVk53GoZ742B":"Chris (رجل)","pNInz6obpgDQGcFmaJgB":"Adam (رجل)"}
 _ei = [0]
 eusage = {"day": "", "u": {}, "g": 0}
 def eleven_tts(text, vid, own=None):
@@ -544,7 +550,8 @@ def on_cb(q):
     elif d.startswith("X:") and (ELEVEN_KEYS or ukey(uid,"x")):
         show(chat_id, "أصوات ElevenLabs (رصيدها اليومي صغير جدًا، ولما يخلص بحول بصوت Edge):", eleven_kb(d[2:]), q)
     elif d == "chv":
-        show(chat_id, "اختار اللغة:", lang_kb(), q)
+        l = cur_lang(uid)
+        show(chat_id, f"اختار الصوت للغة {LANGNAMES.get(l,l)}:", voice_kb(l, uid), q)
     elif d.startswith("v:") and ((d[2:4]=="q:" and d[4:].split("-",1)[0] in GROQ_VOICES and d[4:].split("-",1)[-1] in GROQ_VOICES[d[4:].split("-",1)[0]][1]) or (d[2:4]=="x:" and d[4:] in ELEVEN_VOICES) or (d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="e:" and d[4:] in EDGE)):
         s = st(uid); s["voice"] = d[2:]; s["chosen"] = True; save()
         show(chat_id, f"تم اختيار الصوت: {disp(d[2:])}\nدلوقتي ابعت النص اللي عايز تحوله لصوت. الاختيار ده هيفضل محفوظ للنصوص الجاية.", after_kb(), q)

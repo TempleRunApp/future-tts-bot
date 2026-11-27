@@ -611,13 +611,16 @@ if __name__ == "__main__":
     pub = os.environ.get("PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL")
     if pub: tg("setWebhook", url=pub.rstrip("/")+"/"+SECRET, allowed_updates=["message","callback_query"], drop_pending_updates=False)
     try:
-        tg("setMyCommands", commands=[
-            {"command":"start","description":"بدء استخدام البوت"},
+        CMDS = [
+            {"command":"start","description":"ابدأ من هنا: حوّل النص لصوت"},
             {"command":"voice","description":"اختيار اللغة والصوت"},
             {"command":"style","description":"اختيار طريقة الإلقاء"},
-            {"command":"keys","description":"مفاتيحي: أضف مفتاح API خاص بك (Gemini أو Groq أو ElevenLabs)"},
-            {"command":"contact","description":"تواصل معنا: واتساب وتيليجرام ورقم الهاتف"},
-            {"command":"help","description":"المساعدة"},
-        ])
+            {"command":"keys","description":"مفاتيحي: أضف مفتاحك الخاص (اختياري)"},
+            {"command":"contact","description":"تواصل معنا"},
+            {"command":"quota","description":"رصيدي المتبقي النهارده"},
+            {"command":"help","description":"المساعدة وطريقة الاستخدام"},
+        ]
+        tg("setMyCommands", commands=CMDS)
+        tg("setMyCommands", commands=CMDS, language_code="ar")
     except Exception: pass
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT","10000"))), H).serve_forever()

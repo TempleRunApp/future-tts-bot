@@ -194,10 +194,31 @@ def gate_msg(chat_id):
     rows.append([{"text":"✅ تم الاشتراك، تحقق","callback_data":"chk"}])
     tg("sendMessage", chat_id=chat_id, text=f"أهلاً بك في بوت تحويل النص إلى صوت من {BRAND}.\nعشان تستخدم البوت لازم تشترك في القناة الأول، وبعدها اضغط زر التحقق.", reply_markup={"inline_keyboard":rows})
 
+C_WA = "https://wa.me/201025750695"
+C_TG = "https://t.me/+201025750695"
+G_WA = "https://chat.whatsapp.com/Lc80q70aLPTGel7wv8G0dh?s=cl&p=a&iam=2"
+G_TG = "https://t.me/euvsugxaj"
+def contact_kb():
+    return {"inline_keyboard":[
+        [{"text":"\U0001F4AC واتساب مباشر مع صاحب البوت","url":C_WA}],
+        [{"text":"\u2708\uFE0F تيليجرام مباشر مع صاحب البوت","url":C_TG}],
+        [{"text":"\U0001F465 جروب واتساب تقنيات المستقبل","url":G_WA}],
+        [{"text":"\U0001F4E2 قناة تيليجرام تقنيات المستقبل","url":G_TG}],
+        [{"text":"\U0001F4DE اتصال: 01025750695","url":"tel:+201025750695"}],
+    ]}
+CONTACT_TEXT = ("\U0001F4DE تواصل معنا\n\n"
+ "لأي استفسار أو مشكلة في البوت:\n"
+ "\u2022 واتساب مباشر: " + C_WA + "\n"
+ "\u2022 تيليجرام مباشر: " + C_TG + "\n"
+ "\u2022 رقم الهاتف: 01025750695\n\n"
+ "\U0001F465 جروب واتساب تقنيات المستقبل: " + G_WA + "\n"
+ "\U0001F4E2 قناة تيليجرام: " + G_TG + "\n\n"
+ "اضغط أي زر تحت وهيفتح على طول.")
 HELP = ("\U0001F399 أهلاً بك في بوت تقنيات المستقبل لتحويل النص إلى كلام\n\n"
  "ابعت أي نص بالعربي أو أي لغة، وهرجعه لك رسالة صوتية.\n\n"
  "\U0001F539 /voice اختيار اللغة والصوت (أكتر من 340 صوت عربي وعالمي)\n"
  "\U0001F539 /style اختيار طريقة الإلقاء\n"
+ "\U0001F4DE /contact أو زر «تواصل» تحت: واتساب وتيليجرام ورقم الهاتف\n"
  "\U0001F511 /keys أو زر «مفاتيحي» تحت: تحط مفتاحك الخاص لـ Gemini أو Groq أو ElevenLabs (اختياري، بيتخزن مشفر وبس ليك)\n"
  "\U0001F539 /help المساعدة\n\n"
  "\U0001F4E2 انضم لمجتمع تقنيات المستقبل:\n"
@@ -223,7 +244,7 @@ def lang_kb(page=0):
     if page == 0:
         its=[{"text":LANGNAMES[c],"callback_data":"L:"+c} for c in main]
         if rest: its.append({"text":"لغات أخرى","callback_data":"lp:1"})
-        return {"inline_keyboard":kb_rows(its)+[[{"text":"\U0001F511 مفاتيحي (API keys)","callback_data":"mk"}]]}
+        return {"inline_keyboard":kb_rows(its)+[[{"text":"\U0001F511 مفاتيحي (API keys)","callback_data":"mk"},{"text":"\U0001F4DE تواصل","callback_data":"ct"}]]}
     its=[{"text":c,"callback_data":"L:"+c} for c in rest]
     return {"inline_keyboard":kb_rows(its,3)+[[{"text":"رجوع للغات الأساسية","callback_data":"lp:0"}]]}
 def edge_label(k,v):
@@ -250,7 +271,7 @@ def cur_lang(uid):
     return s.get("lang") or "ar"
 def after_kb():
     return {"inline_keyboard":[[{"text":"تغيير الصوت","callback_data":"chv"},{"text":"تغيير اللغة","callback_data":"lp:0"}],
-                               [{"text":"\U0001F511 مفاتيحي (API keys)","callback_data":"mk"}]]}
+                               [{"text":"\U0001F511 مفاتيحي (API keys)","callback_data":"mk"},{"text":"\U0001F4DE تواصل","callback_data":"ct"}]]}
 def show(q_or_chat, text, kb, q=None):
     if q:
         r = tg("editMessageText", chat_id=q["message"]["chat"]["id"], message_id=q["message"]["message_id"], text=text, reply_markup=kb)
@@ -487,6 +508,7 @@ def on_message(m):
         tg("sendMessage", chat_id=chat_id, text=HELP)
         tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
     elif cmd == "/quota": tg("sendMessage", chat_id=chat_id, text=quota_text(uid))
+    elif cmd in ("/contact","/support"): tg("sendMessage", chat_id=chat_id, text=CONTACT_TEXT, reply_markup=contact_kb())
     elif cmd in ("/keys","/key","/mykeys"): tg("sendMessage", chat_id=chat_id, text=keys_text(uid), reply_markup=keys_kb(uid))
     elif cmd in ("/cancel","/الغاء"): await_key.pop(uid, None); tg("sendMessage", chat_id=chat_id, text="تمام، لغيت.")
     elif cmd in ("/voice","/language"): tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
@@ -532,6 +554,8 @@ def on_cb(q):
     tg("answerCallbackQuery", callback_query_id=q["id"])
     if d == "mk":
         tg("sendMessage", chat_id=chat_id, text=keys_text(uid), reply_markup=keys_kb(uid)); return
+    if d == "ct":
+        tg("sendMessage", chat_id=chat_id, text=CONTACT_TEXT, reply_markup=contact_kb()); return
     if d.startswith("lp:"):
         show(chat_id, LANG_PROMPT, lang_kb(int(d[3:] or 0)), q)
     elif d.startswith("L:"):
@@ -601,6 +625,7 @@ if __name__ == "__main__":
             {"command":"voice","description":"اختيار اللغة والصوت"},
             {"command":"style","description":"اختيار طريقة الإلقاء"},
             {"command":"keys","description":"مفاتيحي: أضف مفتاح API خاص بك (Gemini أو Groq أو ElevenLabs)"},
+            {"command":"contact","description":"تواصل معنا: واتساب وتيليجرام ورقم الهاتف"},
             {"command":"help","description":"المساعدة"},
         ])
     except Exception: pass

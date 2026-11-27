@@ -1,4 +1,4 @@
-import os, asyncio, json, base64, subprocess, threading, time, urllib.request, urllib.parse, uuid, tempfile, io
+import os, asyncio, json, base64, hashlib, subprocess, threading, time, urllib.request, urllib.parse, uuid, tempfile, io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections import defaultdict, deque
 
@@ -32,6 +32,53 @@ def save():
     except Exception: pass
 def st(uid):
     return state.setdefault(str(uid), {"voice":"g:Kore","style":"normal"})
+# ---- per-user API keys: encrypted at rest, bound to one user ----
+def _sk():
+    return hashlib.sha256((TOKEN + "|uk|v1").encode()).digest()
+def _ks(b):
+    k = _sk(); out = bytearray(); i = 0
+    while len(out) < len(b):
+        out += hashlib.sha256(k + i.to_bytes(4, "big")).digest(); i += 1
+    return bytes(x ^ y for x, y in zip(b, out))
+def enc(s):
+    return base64.b64encode(_ks(s.encode())).decode()
+def dec(s):
+    try: return _ks(base64.b64decode(s)).decode()
+    except Exception: return ""
+def ukey(uid, eng):
+    v = (state.get(str(uid)) or {}).get("keys", {}).get(eng)
+    return dec(v) if v else ""
+def set_ukey(uid, eng, key):
+    s = st(uid); ks = s.setdefault("keys", {})
+    if key: ks[eng] = enc(key)
+    else: ks.pop(eng, None)
+    save()
+def mask(k):
+    return (k[:4] + "\u2026" + k[-4:]) if len(k) > 12 else "\u2026" + k[-2:]
+def check_key(eng, key):
+    try:
+        if eng == "q":
+            r = urllib.request.Request("https://api.groq.com/openai/v1/models", headers={"Authorization": "Bearer " + key, "User-Agent": "futuretts/1.0"})
+        else:
+            r = urllib.request.Request("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": key, "User-Agent": "futuretts/1.0"})
+        return urllib.request.urlopen(r, timeout=20).status == 200
+    except Exception:
+        return False
+await_key = {}
+def keys_text(uid):
+    q = ukey(uid, "q"); x = ukey(uid, "x")
+    return ("\U0001F511 \u0645\u0641\u0627\u062a\u064a\u062d\u064a\n\n"
+      "\u0644\u0648 \u0639\u0646\u062f\u0643 \u0645\u0641\u062a\u0627\u062d API \u062e\u0627\u0635 \u0628\u0643\u060c \u062d\u0637\u0647 \u0647\u0646\u0627 \u0648\u0627\u0644\u0628\u0648\u062a \u0647\u064a\u0633\u062a\u062e\u062f\u0645\u0647 \u0644\u064a\u0643 \u0627\u0646\u062a \u0628\u0633\u060c \u0648\u0645\u0634 \u0628\u064a\u062a\u062d\u0633\u0628 \u0645\u0646 \u0631\u0635\u064a\u062f \u0627\u0644\u0628\u0648\u062a.\n\n"
+      + "Groq: " + (("\u2705 \u0645\u062a\u0633\u062c\u0644 " + mask(q)) if q else "\u274c \u0645\u0634 \u0645\u062a\u0633\u062c\u0644") + "\n"
+      + "ElevenLabs: " + (("\u2705 \u0645\u062a\u0633\u062c\u0644 " + mask(x)) if x else "\u274c \u0645\u0634 \u0645\u062a\u0633\u062c\u0644") + "\n\n"
+      "\u0645\u0641\u0627\u062a\u064a\u062d Gemini \u0645\u062a\u0648\u0641\u0631\u0629 \u0645\u0646 \u0627\u0644\u0628\u0648\u062a \u0648\u0645\u0634 \u0645\u062d\u062a\u0627\u062c\u0629 \u0645\u0641\u062a\u0627\u062d \u062e\u0627\u0635.\n"
+      "\u0627\u0644\u0645\u0641\u062a\u0627\u062d \u0628\u064a\u062a\u062e\u0632\u0646 \u0645\u0634\u0641\u0631 \u0648\u0628\u0633 \u0644\u064a\u0643\u060c \u0648\u0628\u064a\u062a\u0645\u0633\u062d \u0645\u0646 \u0627\u0644\u0634\u0627\u062a \u0628\u0639\u062f \u0645\u0627 \u062a\u062d\u0637\u0647.")
+def keys_kb(uid):
+    rows = [[{"text": ("\u062a\u063a\u064a\u064a\u0631 \u0645\u0641\u062a\u0627\u062d Groq" if ukey(uid, "q") else "\u0625\u0636\u0627\u0641\u0629 \u0645\u0641\u062a\u0627\u062d Groq"), "callback_data": "kq"}],
+            [{"text": ("\u062a\u063a\u064a\u064a\u0631 \u0645\u0641\u062a\u0627\u062d ElevenLabs" if ukey(uid, "x") else "\u0625\u0636\u0627\u0641\u0629 \u0645\u0641\u062a\u0627\u062d ElevenLabs"), "callback_data": "kx"}]]
+    if ukey(uid, "q"): rows.append([{"text": "\u0645\u0633\u062d \u0645\u0641\u062a\u0627\u062d Groq", "callback_data": "dq"}])
+    if ukey(uid, "x"): rows.append([{"text": "\u0645\u0633\u062d \u0645\u0641\u062a\u0627\u062d ElevenLabs", "callback_data": "dx"}])
+    return {"inline_keyboard": rows}
 
 def tg(method, **p):
     data = json.dumps(p).encode()
@@ -145,6 +192,7 @@ HELP = ("\U0001F399 أهلاً بك في بوت تقنيات المستقبل ل
  "ابعت أي نص بالعربي أو أي لغة، وهرجعه لك رسالة صوتية.\n\n"
  "\U0001F539 /voice اختيار اللغة والصوت (أكتر من 340 صوت عربي وعالمي)\n"
  "\U0001F539 /style اختيار طريقة الإلقاء\n"
+ "\U0001F511 /keys تحط مفتاحك الخاص لـ Groq أو ElevenLabs (اختياري، بيتخزن مشفر وبس ليك)\n"
  "\U0001F539 /help المساعدة\n\n"
  "\U0001F4E2 انضم لمجتمع تقنيات المستقبل:\n"
  "تيليجرام: https://t.me/euvsugxaj\n"
@@ -177,10 +225,10 @@ def edge_label(k,v):
     who="رجل" if v["Gender"]=="Male" else "امرأة"
     if p[0]=="ar": return f"{name} - {ARC.get(p[1],p[1])} - {who}"
     return f"{name} ({p[1]}) - {who}"
-def voice_kb(lang):
+def voice_kb(lang, uid=None):
     its=[{"text":"⭐ أصوات Gemini الطبيعية","callback_data":"G:"+lang}]
-    if GROQ_KEYS and lang in GROQ_VOICES: its.append({"text":"🎙 أصوات Groq" + (" (لهجة سعودية)" if lang=="ar" else ""),"callback_data":"Q:"+lang})
-    if ELEVEN_KEYS: its.append({"text":"🎧 أصوات ElevenLabs (إنجليزي أساسًا)","callback_data":"X:"+lang})
+    if (GROQ_KEYS or (uid and ukey(uid,"q"))) and lang in GROQ_VOICES: its.append({"text":"🎙 أصوات Groq" + (" (لهجة سعودية)" if lang=="ar" else ""),"callback_data":"Q:"+lang})
+    if ELEVEN_KEYS or (uid and ukey(uid,"x")): its.append({"text":"🎧 أصوات ElevenLabs (إنجليزي أساسًا)","callback_data":"X:"+lang})
     its+=[{"text":edge_label(k,v),"callback_data":"v:e:"+k} for k,v in EDGE.items() if k.startswith(lang+"-")]
     return {"inline_keyboard":kb_rows(its[:90],1)+[[{"text":"رجوع لاختيار اللغة","callback_data":"lp:0"}]]}
 def gem_kb(lang):
@@ -216,11 +264,12 @@ GROQ_GLOBAL_Q = int(os.environ.get("GROQ_GLOBAL_DAILY_CHARS", "3000"))
 GROQ_VOICES = {"ar": ("canopylabs/orpheus-arabic-saudi", {"abdullah":"عبدالله (رجل)","fahad":"فهد (رجل)","sultan":"سلطان (رجل)","lulwa":"لولوة (امرأة)","noura":"نورة (امرأة)","aisha":"عائشة (امرأة)"}),
                "en": ("canopylabs/orpheus-v1-english", {"autumn":"Autumn (F)","diana":"Diana (F)","hannah":"Hannah (F)","austin":"Austin (M)","daniel":"Daniel (M)","troy":"Troy (M)"})}
 _gi = [0]
-def groq_tts(text, lang, voice):
+def groq_tts(text, lang, voice, own=None):
     model = GROQ_VOICES[lang][0]
+    pool = [own] if own else GROQ_KEYS
     last = None
-    for _ in range(len(GROQ_KEYS)):
-        key = GROQ_KEYS[_gi[0] % len(GROQ_KEYS)]
+    for _ in range(len(pool)):
+        key = own or pool[_gi[0] % len(pool)]
         body = {"model": model, "input": text, "voice": voice, "response_format": "wav"}
         r = urllib.request.Request("https://api.groq.com/openai/v1/audio/speech", json.dumps(body).encode(),
                                    {"Content-Type": "application/json", "Authorization": "Bearer " + key, "User-Agent": "futuretts/1.0"})
@@ -228,7 +277,7 @@ def groq_tts(text, lang, voice):
             return urllib.request.urlopen(r, timeout=90).read(), "audio/wav"
         except urllib.error.HTTPError as e:
             last = str(e.code)
-            if e.code in (429, 403): _gi[0] += 1
+            if e.code in (429, 403) and not own: _gi[0] += 1
         except Exception as e:
             last = str(e)
     raise RuntimeError(last)
@@ -238,10 +287,11 @@ ELEVEN_GLOBAL_Q = int(os.environ.get("ELEVEN_GLOBAL_DAILY_CHARS", "330"))
 ELEVEN_VOICES = {"CwhRBWXzGAHq8TQ4Fs17":"Roger (رجل)","JBFqnCBsd6RMkjVDRZzb":"George (رجل)","nPczCjzI2devNBz1zQrb":"Brian (رجل)","onwK4e9ZLuTAKqWW03F9":"Daniel (رجل)","cjVigY5qzO86Huf0OWal":"Eric (رجل)","pqHfZKP75CvOlQylNhV4":"Bill (رجل)","EXAVITQu4vr4xnSDxMaL":"Sarah (امرأة)","XrExE9yKIg1WjnnlVkGX":"Matilda (امرأة)","pFZP5JQG7iQjIQuC4Bku":"Lily (امرأة)","Xb7hH8MSUJpSbSDYk0k2":"Alice (امرأة)","cgSgspJ2msm6clMCkdW9":"Jessica (امرأة)","hpp4J3VqNfWAUOO0d1Us":"Bella (امرأة)"}
 _ei = [0]
 eusage = {"day": "", "u": {}, "g": 0}
-def eleven_tts(text, vid):
+def eleven_tts(text, vid, own=None):
+    pool = [own] if own else ELEVEN_KEYS
     last = None
-    for _ in range(len(ELEVEN_KEYS)):
-        key = ELEVEN_KEYS[_ei[0] % len(ELEVEN_KEYS)]
+    for _ in range(len(pool)):
+        key = own or pool[_ei[0] % len(pool)]
         body = {"text": text, "model_id": "eleven_multilingual_v2"}
         r = urllib.request.Request(f"https://api.elevenlabs.io/v1/text-to-speech/{vid}?output_format=mp3_44100_64", json.dumps(body).encode(),
                                    {"Content-Type": "application/json", "xi-api-key": key, "User-Agent": "futuretts/1.0"})
@@ -249,7 +299,7 @@ def eleven_tts(text, vid):
             return urllib.request.urlopen(r, timeout=90).read(), "audio/mpeg"
         except urllib.error.HTTPError as e:
             last = str(e.code)
-            if e.code in (401, 402, 403, 429): _ei[0] += 1
+            if e.code in (401, 402, 403, 429) and not own: _ei[0] += 1
         except Exception as e:
             last = str(e)
     raise RuntimeError(last)
@@ -292,7 +342,7 @@ def edge_fallback(s):
     return "e:ar-EG-SalmaNeural"
 def quota_text(uid):
     _day(); left = max(0, USER_Q - usage["u"].get(uid, 0)) if USER_Q else None
-    return ("رصيدك النهارده من أصوات Gemini: " + (f"{left} حرف متبقي من {USER_Q}." if left is not None else "غير محدود.") + "\nأصوات Edge مفتوحة بدون حد. الرصيد بيتجدد كل يوم.")
+    return ("رصيدك النهارده من أصوات Gemini: " + (f"{left} حرف متبقي من {USER_Q}." if left is not None else "غير محدود.") + "\nأصوات Edge مفتوحة بدون حد. الرصيد بيتجدد كل يوم.\nلو عندك مفتاح Groq أو ElevenLabs خاص بك، حطه من /keys ومش بيتحسب من رصيد البوت.")
 def merge_ogg(parts):
     if len(parts) == 1: return parts[0]
     d = tempfile.mkdtemp(); names = []
@@ -330,7 +380,8 @@ def speak(chat_id, uid, text, mid):
     vid = s["voice"]; total = sum(len(c) for c in cs); counted = False
     gcount = False; ecount = False
     if vid.startswith("q:"):
-        why = groq_ok(uid, total)
+        uk = ukey(uid, "q")
+        why = None if uk else groq_ok(uid, total)
         if why:
             vid = edge_fallback(s)
             tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات Groq، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات Groq وصلت للحد اليومي للبوت كله، فهحول بصوت Edge. جرب Groq تاني بكرة."), reply_to_message_id=mid)
@@ -340,13 +391,14 @@ def speak(chat_id, uid, text, mid):
                 lg, vn = vid[2:].split("-", 1)
                 for c in cs:
                     tg("sendChatAction", chat_id=chat_id, action="record_voice")
-                    items.append(groq_tts(c, lg, vn)); time.sleep(0.5)
-                gcount = True
+                    items.append(groq_tts(c, lg, vn, uk)); time.sleep(0.5)
+                gcount = not uk
             except Exception:
                 items = []; vid = edge_fallback(s); cs = chunks(text[:MAXTOTAL])
-                tg("sendMessage", chat_id=chat_id, text="أصوات Groq مش متاحة دلوقتي، هحول بصوت Edge.", reply_to_message_id=mid)
+                tg("sendMessage", chat_id=chat_id, text=("مفتاحك في Groq مش شغال، راجع المفتاح من /keys، وحولت بصوت Edge." if uk else "أصوات Groq مش متاحة دلوقتي، هحول بصوت Edge."), reply_to_message_id=mid)
     elif vid.startswith("x:"):
-        why = eleven_ok(uid, total)
+        ux = ukey(uid, "x")
+        why = None if ux else eleven_ok(uid, total)
         if why:
             vid = edge_fallback(s)
             tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات ElevenLabs، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات ElevenLabs وصلت للحد اليومي للبوت كله، فهحول بصوت Edge. جرب تاني بكرة."), reply_to_message_id=mid)
@@ -354,11 +406,11 @@ def speak(chat_id, uid, text, mid):
             try:
                 for c in cs:
                     tg("sendChatAction", chat_id=chat_id, action="record_voice")
-                    items.append(eleven_tts(c, vid[2:]))
-                ecount = True
+                    items.append(eleven_tts(c, vid[2:], ux))
+                ecount = not ux
             except Exception:
                 items = []; vid = edge_fallback(s)
-                tg("sendMessage", chat_id=chat_id, text="أصوات ElevenLabs مش متاحة دلوقتي، هحول بصوت Edge.", reply_to_message_id=mid)
+                tg("sendMessage", chat_id=chat_id, text=("مفتاحك في ElevenLabs مش شغال، راجع المفتاح من /keys، وحولت بصوت Edge." if ux else "أصوات ElevenLabs مش متاحة دلوقتي، هحول بصوت Edge."), reply_to_message_id=mid)
     elif vid.startswith("g:"):
         why = gem_ok(uid, total)
         if why:
@@ -421,10 +473,25 @@ def on_message(m):
         tg("sendMessage", chat_id=chat_id, text=HELP)
         tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
     elif cmd == "/quota": tg("sendMessage", chat_id=chat_id, text=quota_text(uid))
+    elif cmd in ("/keys","/key","/mykeys"): tg("sendMessage", chat_id=chat_id, text=keys_text(uid), reply_markup=keys_kb(uid))
+    elif cmd in ("/cancel","/الغاء"): await_key.pop(uid, None); tg("sendMessage", chat_id=chat_id, text="تمام، لغيت.")
     elif cmd in ("/voice","/language"): tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
     elif cmd == "/style": tg("sendMessage", chat_id=chat_id, text="اختار طريقة الإلقاء:", reply_markup=style_kb())
     elif cmd: tg("sendMessage", chat_id=chat_id, text=HELP)
     else:
+        eng = await_key.pop(uid, None)
+        if eng:
+            k = text.strip()
+            tg("deleteMessage", chat_id=chat_id, message_id=mid)
+            if len(k) < 15 or " " in k or "\n" in k:
+                await_key[uid] = eng
+                tg("sendMessage", chat_id=chat_id, text="ده مش شكل مفتاح. ابعت المفتاح كامل في رسالة لوحده، أو /cancel."); return
+            if not check_key(eng, k):
+                await_key[uid] = eng
+                tg("sendMessage", chat_id=chat_id, text="المفتاح مش شغال (المزود رفضه). راجع المفتاح وجرب تاني، أو /cancel."); return
+            set_ukey(uid, eng, k)
+            tg("sendMessage", chat_id=chat_id, text=f"تم حفظ مفتاحك لـ {'Groq' if eng=='q' else 'ElevenLabs'} ({mask(k)}) وهستخدمه ليك انت بس. المفتاح مشفر ومربوط بحسابك.")
+            return
         if limited(uid): tg("sendMessage", chat_id=chat_id, text="استنى دقيقة وجرب تاني."); return
         if not st(uid).get("chosen"):
             tg("sendMessage", chat_id=chat_id, text="الأول اختار اللغة والصوت:", reply_markup=lang_kb()); return
@@ -453,12 +520,18 @@ def on_cb(q):
         show(chat_id, LANG_PROMPT, lang_kb(int(d[3:] or 0)), q)
     elif d.startswith("L:"):
         l=d[2:]; s=st(uid); s["lang"]=l; save()
-        show(chat_id, f"اختار الصوت للغة {LANGNAMES.get(l,l)}:", voice_kb(l), q)
+        show(chat_id, f"اختار الصوت للغة {LANGNAMES.get(l,l)}:", voice_kb(l, uid), q)
     elif d.startswith("G:"):
         show(chat_id, "أصوات Gemini الطبيعية (بتقرا أي لغة):", gem_kb(d[2:]), q)
-    elif d.startswith("Q:") and GROQ_KEYS and d[2:] in GROQ_VOICES:
+    elif d in ("kq","kx"):
+        eng = d[1]; await_key[uid] = eng
+        tg("sendMessage", chat_id=chat_id, text=("ابعت مفتاح Groq بتاعك في رسالة لوحده هنا.\nهتجيبه مجانًا من console.groq.com/keys.\nهشيل رسالتك من الشات بعد الحفظ. لو غيرت رأيك ابعت /cancel." if eng == "q" else "ابعت مفتاح ElevenLabs بتاعك في رسالة لوحده هنا.\nهتجيبه مجانًا من elevenlabs.io (Profile ثم API keys).\nهشيل رسالتك من الشات بعد الحفظ. لو غيرت رأيك ابعت /cancel."))
+    elif d in ("dq","dx"):
+        eng = d[1]; set_ukey(uid, eng, "")
+        tg("sendMessage", chat_id=chat_id, text=("تم مسح مفتاح Groq بتاعك، رجع البوت لمفتاحه العام." if eng == "q" else "تم مسح مفتاح ElevenLabs بتاعك، رجع البوت لمفتاحه العام."))
+    elif d.startswith("Q:") and (GROQ_KEYS or ukey(uid,"q")) and d[2:] in GROQ_VOICES:
         show(chat_id, "أصوات Groq (رصيدها اليومي صغير، ولما يخلص بحول بصوت Edge):", groq_kb(d[2:]), q)
-    elif d.startswith("X:") and ELEVEN_KEYS:
+    elif d.startswith("X:") and (ELEVEN_KEYS or ukey(uid,"x")):
         show(chat_id, "أصوات ElevenLabs (رصيدها اليومي صغير جدًا، ولما يخلص بحول بصوت Edge):", eleven_kb(d[2:]), q)
     elif d == "chv":
         show(chat_id, "اختار اللغة:", lang_kb(), q)
@@ -472,7 +545,7 @@ def on_cb(q):
 class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
     def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok keys-v1")
     def do_POST(self):
         n = int(self.headers.get("Content-Length",0)); body = self.rfile.read(n)
         if self.path == "/synth":

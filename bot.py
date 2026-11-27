@@ -147,7 +147,7 @@ def gemini_tts(text, voice, style):
                 last = "no audio"
             except urllib.error.HTTPError as e:
                 last = f"{e.code}"
-                if e.code == 429: _ki[0] += 1
+                _ki[0] += 1
             except Exception as e:
                 last = str(e)
     raise RuntimeError(last)

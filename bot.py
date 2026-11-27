@@ -198,7 +198,7 @@ HELP = ("\U0001F399 أهلاً بك في بوت تقنيات المستقبل ل
  "ابعت أي نص بالعربي أو أي لغة، وهرجعه لك رسالة صوتية.\n\n"
  "\U0001F539 /voice اختيار اللغة والصوت (أكتر من 340 صوت عربي وعالمي)\n"
  "\U0001F539 /style اختيار طريقة الإلقاء\n"
- "\U0001F511 /keys تحط مفتاحك الخاص لـ Gemini أو Groq أو ElevenLabs (اختياري، بيتخزن مشفر وبس ليك)\n"
+ "\U0001F511 /keys أو زر «مفاتيحي» تحت: تحط مفتاحك الخاص لـ Gemini أو Groq أو ElevenLabs (اختياري، بيتخزن مشفر وبس ليك)\n"
  "\U0001F539 /help المساعدة\n\n"
  "\U0001F4E2 انضم لمجتمع تقنيات المستقبل:\n"
  "تيليجرام: https://t.me/euvsugxaj\n"
@@ -223,7 +223,7 @@ def lang_kb(page=0):
     if page == 0:
         its=[{"text":LANGNAMES[c],"callback_data":"L:"+c} for c in main]
         if rest: its.append({"text":"لغات أخرى","callback_data":"lp:1"})
-        return {"inline_keyboard":kb_rows(its)}
+        return {"inline_keyboard":kb_rows(its)+[[{"text":"\U0001F511 مفاتيحي (API keys)","callback_data":"mk"}]]}
     its=[{"text":c,"callback_data":"L:"+c} for c in rest]
     return {"inline_keyboard":kb_rows(its,3)+[[{"text":"رجوع للغات الأساسية","callback_data":"lp:0"}]]}
 def edge_label(k,v):
@@ -249,7 +249,8 @@ def cur_lang(uid):
         return v[2:].split("-")[0]
     return s.get("lang") or "ar"
 def after_kb():
-    return {"inline_keyboard":[[{"text":"تغيير الصوت","callback_data":"chv"},{"text":"تغيير اللغة","callback_data":"lp:0"}]]}
+    return {"inline_keyboard":[[{"text":"تغيير الصوت","callback_data":"chv"},{"text":"تغيير اللغة","callback_data":"lp:0"}],
+                               [{"text":"\U0001F511 مفاتيحي (API keys)","callback_data":"mk"}]]}
 def show(q_or_chat, text, kb, q=None):
     if q:
         r = tg("editMessageText", chat_id=q["message"]["chat"]["id"], message_id=q["message"]["message_id"], text=text, reply_markup=kb)
@@ -529,6 +530,8 @@ def on_cb(q):
     if CHANNELS and not is_member(uid):
         tg("answerCallbackQuery", callback_query_id=q["id"], text="اشترك في القناة الأول", show_alert=True); return
     tg("answerCallbackQuery", callback_query_id=q["id"])
+    if d == "mk":
+        tg("sendMessage", chat_id=chat_id, text=keys_text(uid), reply_markup=keys_kb(uid)); return
     if d.startswith("lp:"):
         show(chat_id, LANG_PROMPT, lang_kb(int(d[3:] or 0)), q)
     elif d.startswith("L:"):
@@ -592,4 +595,13 @@ if __name__ == "__main__":
     load_edge()
     pub = os.environ.get("PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL")
     if pub: tg("setWebhook", url=pub.rstrip("/")+"/"+SECRET, allowed_updates=["message","callback_query"], drop_pending_updates=False)
+    try:
+        tg("setMyCommands", commands=[
+            {"command":"start","description":"بدء استخدام البوت"},
+            {"command":"voice","description":"اختيار اللغة والصوت"},
+            {"command":"style","description":"اختيار طريقة الإلقاء"},
+            {"command":"keys","description":"مفاتيحي: أضف مفتاح API خاص بك (Gemini أو Groq أو ElevenLabs)"},
+            {"command":"help","description":"المساعدة"},
+        ])
+    except Exception: pass
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT","10000"))), H).serve_forever()

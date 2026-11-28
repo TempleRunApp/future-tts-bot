@@ -310,7 +310,10 @@ GROQ_KEYS = [k.strip() for k in os.environ.get("GROQ_API_KEY", "").split(",") if
 GROQ_USER_Q = int(os.environ.get("GROQ_USER_DAILY_CHARS", "600"))
 GROQ_GLOBAL_Q = int(os.environ.get("GROQ_GLOBAL_DAILY_CHARS", "3000"))
 GROQ_VOICES = {"ar": ("canopylabs/orpheus-arabic-saudi", {"abdullah":"عبدالله (رجل)","fahad":"فهد (رجل)","sultan":"سلطان (رجل)","lulwa":"لولوة (امرأة)","noura":"نورة (امرأة)","aisha":"عائشة (امرأة)"}),
-               "en": ("canopylabs/orpheus-v1-english", {"autumn":"Autumn (F)","diana":"Diana (F)","hannah":"Hannah (F)","austin":"Austin (M)","daniel":"Daniel (M)","troy":"Troy (M)"})}
+               # English Orpheus needs the org admin to accept Groq's terms before the API accepts it.
+               # Re-enable this line once that is done: the voices are ready.
+               # "en": ("canopylabs/orpheus-v1-english", {"autumn":"Autumn (F)","diana":"Diana (F)","hannah":"Hannah (F)","austin":"Austin (M)","daniel":"Daniel (M)","troy":"Troy (M)"}),
+               }
 _gi = [0]
 def groq_tts(text, lang, voice, own=None):
     model = GROQ_VOICES[lang][0]

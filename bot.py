@@ -297,7 +297,7 @@ def disp(vid):
         lg, vn = vid[2:].split("-", 1); return "Groq " + vn
     if vid.startswith("g:"): return "Gemini "+vid[2:]
     if vid.startswith("v:"): return "أصوات طبيعية "+vid[2:]
-    if vid.startswith("o:"): return OSS_VOICES[vid[2:]][0].split(" (")[0] + (" - Meta MMS (CC BY-NC 4.0)" if vid == "o:mms" else " - أصوات الأثير")
+    if vid.startswith("o:"): return OSS_VOICES[vid[2:]][0].split(" (")[0] + (" - Meta MMS (CC BY-NC 4.0)" if vid == "o:mms" else " - Aether Voices")
     if vid.startswith("x:"): return "ElevenLabs " + ELEVEN_VOICES.get(vid[2:], "").split(" ")[0]
     v = EDGE.get(vid[2:]); return (v["ShortName"] if v else vid[2:])
 ARC = {"EG":"مصر","SA":"السعودية","AE":"الإمارات","KW":"الكويت","QA":"قطر","BH":"البحرين","OM":"عمان","JO":"الأردن","LB":"لبنان","SY":"سوريا","IQ":"العراق","YE":"اليمن","LY":"ليبيا","TN":"تونس","DZ":"الجزائر","MA":"المغرب","PS":"فلسطين","SD":"السودان"}
@@ -323,7 +323,7 @@ def edge_label(k,v):
     return f"{name} ({p[1]}) - {who}"
 def voice_kb(lang, uid=None):
     its=[{"text":"⭐ أصوات Gemini الطبيعية","callback_data":"G:"+lang}]
-    its.append({"text":"🌌 أصوات الأثير (4 أصوات)","callback_data":"O:"+lang})
+    its.append({"text":"🌌 Aether Voices (4 أصوات)","callback_data":"O:"+lang})
     if VOXA_KEY: its.append({"text":"🌟 أصوات طبيعية (10 أصوات)","callback_data":"V:"+lang})
     if (GROQ_KEYS or (uid and ukey(uid,"q"))) and lang in GROQ_VOICES: its.append({"text":"🎙 أصوات Groq" + (" (لهجة سعودية)" if lang=="ar" else ""),"callback_data":"Q:"+lang})
     if ELEVEN_KEYS or (uid and ukey(uid,"x")): its.append({"text":"🎧 أصوات ElevenLabs (إنجليزي أساسًا)","callback_data":"X:"+lang})
@@ -608,7 +608,7 @@ def speak(chat_id, uid, text, mid):
         why = oss_ok(uid, total)
         if why:
             vid = edge_fallback(s)
-            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات الأثير، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات الأثير مش متاحة دلوقتي، هحول بصوت Edge المجاني."))
+            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من Aether Voices، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "Aether Voices مش متاحة دلوقتي، هحول بصوت Edge المجاني."))
             cs = chunks(text[:MAXTOTAL])
         else:
             try:
@@ -618,7 +618,7 @@ def speak(chat_id, uid, text, mid):
                 oss_add(uid, total)
             except Exception:
                 items = []; vid = edge_fallback(s); cs = chunks(text[:MAXTOTAL])
-                tg("sendMessage", chat_id=chat_id, text="أصوات الأثير مش متاحة دلوقتي، حولت بصوت Edge.")
+                tg("sendMessage", chat_id=chat_id, text="Aether Voices مش متاحة دلوقتي، حولت بصوت Edge.")
     elif vid.startswith("g:"):
         ug = ukey(uid, "g")
         why = None if ug else gem_ok(uid, total)
@@ -755,7 +755,7 @@ def on_cb(q):
     elif d.startswith("V:") and VOXA_KEY:
         show(chat_id, "أصوات طبيعية. الأصوات سارة وأدريان لكل اللغات، والباقي عربي، ومصري ويمني. لو الخدمة وقفت بحول بصوت Edge:", vox_kb(d[2:]), q)
     elif d.startswith("O:"):
-        show(chat_id, "أصوات الأثير، شغالة جوه البوت. الصوت الأول ممكن ياخد وقت زيادة.\n" + OSS_CREDITS + "\nصوت MMS من Meta للاستخدام غير التجاري فقط.", oss_kb(d[2:]), q)
+        show(chat_id, "Aether Voices، شغالة جوه البوت. الصوت الأول ممكن ياخد وقت زيادة.\n" + OSS_CREDITS + "\nصوت MMS من Meta للاستخدام غير التجاري فقط.", oss_kb(d[2:]), q)
     elif d.startswith("X:") and (ELEVEN_KEYS or ukey(uid,"x")):
         show(chat_id, "أصوات ElevenLabs (رصيدها اليومي صغير جدًا، ولما يخلص بحول بصوت Edge):", eleven_kb(d[2:]), q)
     elif d == "chv":

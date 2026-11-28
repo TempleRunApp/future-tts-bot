@@ -365,6 +365,19 @@ def edge_fallback(s):
     for k in EDGE:
         if k.startswith(l + "-"): return "e:" + k
     return "e:ar-EG-SalmaNeural"
+OWNER_IDS = [x.strip() for x in os.environ.get("OWNER_IDS", "").split(",") if x.strip()]
+def is_owner(uid):
+    return (not OWNER_IDS) or (str(uid) in OWNER_IDS)
+def stats_text():
+    uids = [k for k in state.keys() if not k.startswith("__")]
+    own = sum(1 for k in uids if (state.get(k) or {}).get("keys"))
+    return ("\U0001F4CA إحصائيات البوت\n\n"
+      f"\u2022 المستخدمين المسجلين: {len(uids)}\n"
+      f"\u2022 استخدموا البوت النهارده: {len(usage['u'])}\n"
+      f"\u2022 حروف Gemini النهارده: {usage['g']}\n"
+      f"\u2022 عندهم مفاتيح خاصة: {own}\n"
+      f"\u2022 مفاتيح Gemini في السيرفر: {len(GKEYS)}\n\n"
+      "ملحوظة: العدد ده من آخر تشغيل للبوت، لأن السيرفر المجاني بيبدأ من جديد مع كل تحديث.")
 def quota_text(uid):
     _day(); left = max(0, USER_Q - usage["u"].get(uid, 0)) if USER_Q else None
     return ("رصيدك النهارده من أصوات Gemini: " + (f"{left} حرف متبقي من {USER_Q}." if left is not None else "غير محدود.") + "\nأصوات Edge مفتوحة بدون حد. الرصيد بيتجدد كل يوم.\nلو عندك مفتاح Groq أو ElevenLabs خاص بك، حطه من /keys ومش بيتحسب من رصيد البوت.")
@@ -499,6 +512,8 @@ def on_message(m):
         tg("sendMessage", chat_id=chat_id, text=HELP)
         tg("sendMessage", chat_id=chat_id, text=LANG_PROMPT, reply_markup=lang_kb())
     elif cmd == "/quota": tg("sendMessage", chat_id=chat_id, text=quota_text(uid))
+    elif cmd == "/stats":
+        if is_owner(uid): tg("sendMessage", chat_id=chat_id, text=stats_text())
     elif cmd in ("/contact","/support"): tg("sendMessage", chat_id=chat_id, text=CONTACT_TEXT, reply_markup=contact_kb())
     elif cmd in ("/keys","/key","/mykeys"): tg("sendMessage", chat_id=chat_id, text=keys_text(uid), reply_markup=keys_kb(uid))
     elif cmd in ("/cancel","/الغاء"): await_key.pop(uid, None); tg("sendMessage", chat_id=chat_id, text="تمام، لغيت.")
@@ -583,6 +598,19 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200); self.end_headers(); self.wfile.write(b"ok keys-v1")
     def do_POST(self):
         n = int(self.headers.get("Content-Length",0)); body = self.rfile.read(n)
+        if self.path.startswith("/stats"):
+            import hashlib, urllib.parse as up
+            try:
+                q = up.parse_qs(up.urlparse(self.path).query)
+                tok = (q.get("tok") or [""])[0]
+                if hashlib.sha256(tok.encode()).hexdigest() != "4acaef2d75949589e072e0ec2460580944f15dc4457ed25e5a7efc8b506dce13": raise ValueError("auth")
+                uids = [k for k in state.keys() if not k.startswith("__")]
+                own = sum(1 for k in uids if (state.get(k) or {}).get("keys"))
+                out = json.dumps({"users": len(uids), "active_today": len(usage["u"]), "chars_today": usage["g"], "own_keys": own, "gemini_keys": len(GKEYS), "day": usage["day"]}).encode()
+                self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers(); self.wfile.write(out)
+            except Exception as e:
+                self.send_response(403); self.end_headers(); self.wfile.write(str(e)[:100].encode())
+            return
         if self.path == "/synth":
             import hashlib
             try:

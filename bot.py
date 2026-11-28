@@ -245,7 +245,7 @@ def disp(vid):
     if vid.startswith("q:"):
         lg, vn = vid[2:].split("-", 1); return "Groq " + vn
     if vid.startswith("g:"): return "Gemini "+vid[2:]
-    if vid.startswith("v:"): return "VoxFlow "+vid[2:]
+    if vid.startswith("v:"): return "أصوات طبيعية "+vid[2:]
     if vid.startswith("x:"): return "ElevenLabs " + ELEVEN_VOICES.get(vid[2:], "").split(" ")[0]
     v = EDGE.get(vid[2:]); return (v["ShortName"] if v else vid[2:])
 ARC = {"EG":"مصر","SA":"السعودية","AE":"الإمارات","KW":"الكويت","QA":"قطر","BH":"البحرين","OM":"عمان","JO":"الأردن","LB":"لبنان","SY":"سوريا","IQ":"العراق","YE":"اليمن","LY":"ليبيا","TN":"تونس","DZ":"الجزائر","MA":"المغرب","PS":"فلسطين","SD":"السودان"}
@@ -271,7 +271,7 @@ def edge_label(k,v):
     return f"{name} ({p[1]}) - {who}"
 def voice_kb(lang, uid=None):
     its=[{"text":"⭐ أصوات Gemini الطبيعية","callback_data":"G:"+lang}]
-    if VOXA_KEY: its.append({"text":"🌟 أصوات VoxFlow الطبيعية (10 أصوات)","callback_data":"V:"+lang})
+    if VOXA_KEY: its.append({"text":"🌟 أصوات طبيعية (10 أصوات)","callback_data":"V:"+lang})
     if (GROQ_KEYS or (uid and ukey(uid,"q"))) and lang in GROQ_VOICES: its.append({"text":"🎙 أصوات Groq" + (" (لهجة سعودية)" if lang=="ar" else ""),"callback_data":"Q:"+lang})
     if ELEVEN_KEYS or (uid and ukey(uid,"x")): its.append({"text":"🎧 أصوات ElevenLabs (إنجليزي أساسًا)","callback_data":"X:"+lang})
     its+=[{"text":edge_label(k,v),"callback_data":"v:e:"+k} for k,v in EDGE.items() if k.startswith(lang+"-")]
@@ -519,7 +519,7 @@ def speak(chat_id, uid, text, mid):
         why = voxa_ok(uid, total)
         if why:
             vid = edge_fallback(s)
-            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات VoxFlow، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات VoxFlow مش متاحة دلوقتي، هحول بصوت Edge المجاني."))
+            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات طبيعية، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات طبيعية مش متاحة دلوقتي، هحول بصوت Edge المجاني."))
             cs = chunks(text[:MAXTOTAL])
         else:
             try:
@@ -529,7 +529,7 @@ def speak(chat_id, uid, text, mid):
                 voxa_add(uid, total)
             except Exception:
                 items = []; vid = edge_fallback(s); cs = chunks(text[:MAXTOTAL])
-                tg("sendMessage", chat_id=chat_id, text="أصوات VoxFlow مش متاحة دلوقتي (السيرفر بتاعها مجاني وممكن يقف)، حولت بصوت Edge.")
+                tg("sendMessage", chat_id=chat_id, text="أصوات طبيعية مش متاحة دلوقتي (السيرفر بتاعها مجاني وممكن يقف)، حولت بصوت Edge.")
     elif vid.startswith("g:"):
         ug = ukey(uid, "g")
         why = None if ug else gem_ok(uid, total)
@@ -664,7 +664,7 @@ def on_cb(q):
     elif d.startswith("Q:") and (GROQ_KEYS or ukey(uid,"q")) and d[2:] in GROQ_VOICES:
         show(chat_id, "أصوات Groq (رصيدها اليومي صغير، ولما يخلص بحول بصوت Edge):", groq_kb(d[2:]), q)
     elif d.startswith("V:") and VOXA_KEY:
-        show(chat_id, "أصوات VoxFlow الطبيعية. الأصوات سارة وأدريان لكل اللغات، والباقي عربي، ومصري ويمني. لو الخدمة وقفت بحول بصوت Edge:", vox_kb(d[2:]), q)
+        show(chat_id, "أصوات طبيعية. الأصوات سارة وأدريان لكل اللغات، والباقي عربي، ومصري ويمني. لو الخدمة وقفت بحول بصوت Edge:", vox_kb(d[2:]), q)
     elif d.startswith("X:") and (ELEVEN_KEYS or ukey(uid,"x")):
         show(chat_id, "أصوات ElevenLabs (رصيدها اليومي صغير جدًا، ولما يخلص بحول بصوت Edge):", eleven_kb(d[2:]), q)
     elif d == "chv":

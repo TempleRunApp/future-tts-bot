@@ -1,4 +1,55 @@
 import os, asyncio, json, base64, hashlib, subprocess, threading, time, urllib.request, urllib.parse, uuid, tempfile, io
+
+import sys
+OSS_DIR = "/tmp/oss"
+HFR = "https://huggingface.co/"
+OSS_VOICES = {
+ "kareem": ("Kareem (رجل - أردني)", "p", "rhasspy/piper-voices/resolve/main/ar/ar_JO/kareem/medium/ar_JO-kareem-medium", "Kareem: Piper (Rhasspy)"),
+ "clartts": ("clartts (رجل - فصحى، قارئ كتاب صوتي)", "p", "rhasspy/piper-voices/resolve/main/ar/ar_JO/clartts/medium/ar_JO-clartts-medium", "clartts: Piper (Rhasspy)، بيانات CLArTTS (CC BY 4.0)"),
+ "emirati": ("Emirati female (امرأة - إماراتي)", "p", "vadimbelsky/arabic-emirati-female-piper/resolve/main/arabic-emirati-female-model", "Emirati female: vadimbelsky (MIT)"),
+ "mms": ("MMS Arabic (من Meta - فصحى)", "m", "Xenova/mms-tts-ara/resolve/main", "MMS Arabic: Meta AI (CC BY-NC 4.0)، نسخة ONNX من Xenova"),
+}
+def _oss_get(url, dest):
+    if os.path.exists(dest) and os.path.getsize(dest) > 1000: return dest
+    os.makedirs(OSS_DIR, exist_ok=True)
+    tmp = dest + ".part%d" % os.getpid()
+    r = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "futuretts/1.0"}), timeout=120)
+    with open(tmp, "wb") as f:
+        while True:
+            b = r.read(1 << 20)
+            if not b: break
+            f.write(b)
+    os.replace(tmp, dest); return dest
+def _oss_child(voice, text):
+    import wave, json as _j
+    kind, base = OSS_VOICES[voice][1], OSS_VOICES[voice][2]
+    out = io.BytesIO()
+    if kind == "p":
+        m = _oss_get(HFR + base + ".onnx", os.path.join(OSS_DIR, voice + ".onnx"))
+        _oss_get(HFR + base + ".onnx.json", m + ".json")
+        from piper import PiperVoice
+        v = PiperVoice.load(m)
+        with wave.open(out, "wb") as w: v.synthesize_wav(text, w)
+    else:
+        import numpy as np, onnxruntime as ort
+        m = _oss_get(HFR + base + "/onnx/model.onnx", os.path.join(OSS_DIR, "mms.onnx"))
+        vp = _oss_get(HFR + base + "/vocab.json", os.path.join(OSS_DIR, "mms_vocab.json"))
+        V = _j.load(open(vp)); allowed = set("انكعإغذةسرطختجظيد–صثأىضحه ءآبوملشقزؤف_ئ")
+        t = "".join(c for c in text.lower() if c in allowed).strip()
+        ids = []
+        for c in t: ids += [0, V[c]]
+        if not ids: raise RuntimeError("no arabic text")
+        ids.append(0)
+        so = ort.SessionOptions(); so.intra_op_num_threads = 1
+        sess = ort.InferenceSession(m, so, providers=["CPUExecutionProvider"])
+        a = np.array([ids], dtype=np.int64)
+        wav = sess.run(None, {"input_ids": a, "attention_mask": np.ones_like(a)})[0].reshape(-1)
+        pcm = (np.clip(wav, -1, 1) * 32767).astype(np.int16)
+        with wave.open(out, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(pcm.tobytes())
+    return out.getvalue()
+if __name__ == "__main__" and len(sys.argv) > 2 and sys.argv[1] == "--oss":
+    sys.stdout.buffer.write(_oss_child(sys.argv[2], sys.stdin.buffer.read().decode("utf-8"))); sys.stdout.flush(); os._exit(0)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections import defaultdict, deque
 
@@ -246,6 +297,7 @@ def disp(vid):
         lg, vn = vid[2:].split("-", 1); return "Groq " + vn
     if vid.startswith("g:"): return "Gemini "+vid[2:]
     if vid.startswith("v:"): return "أصوات طبيعية "+vid[2:]
+    if vid.startswith("o:"): return OSS_VOICES[vid[2:]][0].split(" (")[0] + (" - Meta MMS (CC BY-NC 4.0)" if vid == "o:mms" else " - أصوات الأثير")
     if vid.startswith("x:"): return "ElevenLabs " + ELEVEN_VOICES.get(vid[2:], "").split(" ")[0]
     v = EDGE.get(vid[2:]); return (v["ShortName"] if v else vid[2:])
 ARC = {"EG":"مصر","SA":"السعودية","AE":"الإمارات","KW":"الكويت","QA":"قطر","BH":"البحرين","OM":"عمان","JO":"الأردن","LB":"لبنان","SY":"سوريا","IQ":"العراق","YE":"اليمن","LY":"ليبيا","TN":"تونس","DZ":"الجزائر","MA":"المغرب","PS":"فلسطين","SD":"السودان"}
@@ -271,6 +323,7 @@ def edge_label(k,v):
     return f"{name} ({p[1]}) - {who}"
 def voice_kb(lang, uid=None):
     its=[{"text":"⭐ أصوات Gemini الطبيعية","callback_data":"G:"+lang}]
+    its.append({"text":"🌌 أصوات الأثير (4 أصوات)","callback_data":"O:"+lang})
     if VOXA_KEY: its.append({"text":"🌟 أصوات طبيعية (10 أصوات)","callback_data":"V:"+lang})
     if (GROQ_KEYS or (uid and ukey(uid,"q"))) and lang in GROQ_VOICES: its.append({"text":"🎙 أصوات Groq" + (" (لهجة سعودية)" if lang=="ar" else ""),"callback_data":"Q:"+lang})
     if ELEVEN_KEYS or (uid and ukey(uid,"x")): its.append({"text":"🎧 أصوات ElevenLabs (إنجليزي أساسًا)","callback_data":"X:"+lang})
@@ -377,6 +430,27 @@ VOXA_KEY = os.environ.get("VOXA_KEY", "")
 VOXA_USER_Q = int(os.environ.get("VOXA_USER_DAILY_CHARS", "4000"))
 VOXA_VOICES = {"sarah":"sarah (كل اللغات)","adrian":"adrian (كل اللغات)","yiyi":"yiyi","issam":"issam","huda":"huda","ads":"ads","amr":"amr","ghla":"ghla","egyptianm":"egyptianm (مصري)","yemenm":"yemenm (يمني)"}
 vusage = {"day": "", "u": {}}
+
+OSS_USER_Q = int(os.environ.get("OSS_USER_DAILY_CHARS", "3000"))
+ousage = {"day": "", "u": {}}
+osem = threading.Semaphore(1)
+def oss_ok(uid, n):
+    d = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7200))
+    if ousage["day"] != d: ousage.update(day=d, u={})
+    if OSS_USER_Q and ousage["u"].get(uid, 0) + n > OSS_USER_Q: return "user"
+    return None
+def oss_add(uid, n): ousage["u"][uid] = ousage["u"].get(uid, 0) + n
+def oss_tts(text, voice):
+    if not osem.acquire(timeout=45): raise RuntimeError("busy")
+    try:
+        p = subprocess.run([sys.executable, os.path.abspath(__file__), "--oss", voice], input=text.encode("utf-8"), capture_output=True, timeout=150)
+        if p.returncode or p.stdout[:4] != b"RIFF": raise RuntimeError("oss failed")
+        return p.stdout, "audio/wav"
+    finally: osem.release()
+def oss_kb(lang):
+    its=[{"text":v[0],"callback_data":"v:o:"+k} for k,v in OSS_VOICES.items()]
+    return {"inline_keyboard":kb_rows(its,1)+[[{"text":"رجوع لأصوات اللغة","callback_data":"L:"+lang}]]}
+OSS_CREDITS = "المصادر:\n" + "\n".join("• "+v[3] for v in OSS_VOICES.values())
 vsem = threading.Semaphore(2)
 def voxa_ok(uid, n):
     d = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7200))
@@ -475,7 +549,7 @@ def one_chunk(c, vid, style, allow_fb, own=None):
 def speak(chat_id, uid, text, mid):
     s = st(uid)
     text = text.strip()
-    cs = chunks(text[:MAXTOTAL], 190 if s["voice"].startswith("q:") else 200 if s["voice"].startswith("v:") else MAXCH)
+    cs = chunks(text[:MAXTOTAL], 190 if s["voice"].startswith("q:") else 200 if s["voice"].startswith("v:") else 150 if s["voice"].startswith("o:") else MAXCH)
     if len(text) > MAXTOTAL:
         tg("sendMessage", chat_id=chat_id, text=f"النص طويل، هحول أول {MAXTOTAL} حرف بس.", reply_to_message_id=mid)
     if len(cs) > 2:
@@ -530,6 +604,21 @@ def speak(chat_id, uid, text, mid):
             except Exception:
                 items = []; vid = edge_fallback(s); cs = chunks(text[:MAXTOTAL])
                 tg("sendMessage", chat_id=chat_id, text="أصوات طبيعية مش متاحة دلوقتي (السيرفر بتاعها مجاني وممكن يقف)، حولت بصوت Edge.")
+    elif vid.startswith("o:") and vid[2:] in OSS_VOICES:
+        why = oss_ok(uid, total)
+        if why:
+            vid = edge_fallback(s)
+            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات الأثير، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات الأثير مش متاحة دلوقتي، هحول بصوت Edge المجاني."))
+            cs = chunks(text[:MAXTOTAL])
+        else:
+            try:
+                for c in cs:
+                    tg("sendChatAction", chat_id=chat_id, action="record_voice")
+                    items.append(oss_tts(c, vid[2:]))
+                oss_add(uid, total)
+            except Exception:
+                items = []; vid = edge_fallback(s); cs = chunks(text[:MAXTOTAL])
+                tg("sendMessage", chat_id=chat_id, text="أصوات الأثير مش متاحة دلوقتي، حولت بصوت Edge.")
     elif vid.startswith("g:"):
         ug = ukey(uid, "g")
         why = None if ug else gem_ok(uid, total)
@@ -665,12 +754,14 @@ def on_cb(q):
         show(chat_id, "أصوات Groq (رصيدها اليومي صغير، ولما يخلص بحول بصوت Edge):", groq_kb(d[2:]), q)
     elif d.startswith("V:") and VOXA_KEY:
         show(chat_id, "أصوات طبيعية. الأصوات سارة وأدريان لكل اللغات، والباقي عربي، ومصري ويمني. لو الخدمة وقفت بحول بصوت Edge:", vox_kb(d[2:]), q)
+    elif d.startswith("O:"):
+        show(chat_id, "أصوات الأثير، شغالة جوه البوت. الصوت الأول ممكن ياخد وقت زيادة.\n" + OSS_CREDITS + "\nصوت MMS من Meta للاستخدام غير التجاري فقط.", oss_kb(d[2:]), q)
     elif d.startswith("X:") and (ELEVEN_KEYS or ukey(uid,"x")):
         show(chat_id, "أصوات ElevenLabs (رصيدها اليومي صغير جدًا، ولما يخلص بحول بصوت Edge):", eleven_kb(d[2:]), q)
     elif d == "chv":
         l = cur_lang(uid)
         show(chat_id, f"اختار الصوت للغة {LANGNAMES.get(l,l)}:", voice_kb(l, uid), q)
-    elif d.startswith("v:") and ((d[2:4]=="q:" and d[4:].split("-",1)[0] in GROQ_VOICES and d[4:].split("-",1)[-1] in GROQ_VOICES[d[4:].split("-",1)[0]][1]) or (d[2:4]=="x:" and d[4:] in ELEVEN_VOICES) or (d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="v:" and d[4:] in VOXA_VOICES and VOXA_KEY) or (d[2:4]=="e:" and d[4:] in EDGE)):
+    elif d.startswith("v:") and ((d[2:4]=="q:" and d[4:].split("-",1)[0] in GROQ_VOICES and d[4:].split("-",1)[-1] in GROQ_VOICES[d[4:].split("-",1)[0]][1]) or (d[2:4]=="x:" and d[4:] in ELEVEN_VOICES) or (d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="v:" and d[4:] in VOXA_VOICES and VOXA_KEY) or (d[2:4]=="o:" and d[4:] in OSS_VOICES) or (d[2:4]=="e:" and d[4:] in EDGE)):
         s = st(uid); s["voice"] = d[2:]; s["chosen"] = True; save()
         show(chat_id, f"تم اختيار الصوت: {disp(d[2:])}\nدلوقتي ابعت النص اللي عايز تحوله لصوت. الاختيار ده هيفضل محفوظ للنصوص الجاية.", after_kb(), q)
     elif d.startswith("s:") and d[2:] in STYLES:
@@ -704,6 +795,7 @@ class H(BaseHTTPRequestHandler):
                 if j.get("engine") == "q": raw, mime = groq_tts(j["text"], j.get("lang","ar"), j["voice"])
                 elif j.get("engine") == "x": raw, mime = eleven_tts(j["text"], j["voice"])
                 elif j.get("engine") == "v": raw, mime = voxa_tts(j["text"], j["voice"])
+                elif j.get("engine") == "o": raw, mime = oss_tts(j["text"], j["voice"])
                 else: raw, mime = gemini_tts(j["text"], j["voice"], j.get("style",""))
                 self.send_response(200); self.send_header("X-Mime", mime or ""); self.end_headers(); self.wfile.write(raw)
             except Exception as e:

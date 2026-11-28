@@ -183,6 +183,7 @@ def gemini_tts(text, voice, style, own=None):
     raise RuntimeError(last)
 
 def to_ogg(raw, mime):
+    if raw[:4] == b"OggS": return raw
     if "mpeg" in mime: args = ["-f","mp3"]
     elif raw[:4] == b"RIFF": args = ["-f","wav"]
     else:
@@ -244,6 +245,7 @@ def disp(vid):
     if vid.startswith("q:"):
         lg, vn = vid[2:].split("-", 1); return "Groq " + vn
     if vid.startswith("g:"): return "Gemini "+vid[2:]
+    if vid.startswith("v:"): return "VoxFlow "+vid[2:]
     if vid.startswith("x:"): return "ElevenLabs " + ELEVEN_VOICES.get(vid[2:], "").split(" ")[0]
     v = EDGE.get(vid[2:]); return (v["ShortName"] if v else vid[2:])
 ARC = {"EG":"مصر","SA":"السعودية","AE":"الإمارات","KW":"الكويت","QA":"قطر","BH":"البحرين","OM":"عمان","JO":"الأردن","LB":"لبنان","SY":"سوريا","IQ":"العراق","YE":"اليمن","LY":"ليبيا","TN":"تونس","DZ":"الجزائر","MA":"المغرب","PS":"فلسطين","SD":"السودان"}
@@ -269,6 +271,7 @@ def edge_label(k,v):
     return f"{name} ({p[1]}) - {who}"
 def voice_kb(lang, uid=None):
     its=[{"text":"⭐ أصوات Gemini الطبيعية","callback_data":"G:"+lang}]
+    if VOXA_KEY: its.append({"text":"🌟 أصوات VoxFlow الطبيعية (10 أصوات)","callback_data":"V:"+lang})
     if (GROQ_KEYS or (uid and ukey(uid,"q"))) and lang in GROQ_VOICES: its.append({"text":"🎙 أصوات Groq" + (" (لهجة سعودية)" if lang=="ar" else ""),"callback_data":"Q:"+lang})
     if ELEVEN_KEYS or (uid and ukey(uid,"x")): its.append({"text":"🎧 أصوات ElevenLabs (إنجليزي أساسًا)","callback_data":"X:"+lang})
     its+=[{"text":edge_label(k,v),"callback_data":"v:e:"+k} for k,v in EDGE.items() if k.startswith(lang+"-")]
@@ -368,6 +371,41 @@ def eleven_kb(lang):
     its=[{"text":lab,"callback_data":"v:x:"+k} for k,lab in ELEVEN_VOICES.items()]
     return {"inline_keyboard":kb_rows(its,2)+[[{"text":"رجوع لأصوات اللغة","callback_data":"L:"+lang}]]}
 gusage = {"day": "", "u": {}, "g": 0}
+
+VOXA_URL = os.environ.get("VOXA_URL", "https://viscodev.x10.mx/live-speech/api.php")
+VOXA_KEY = os.environ.get("VOXA_KEY", "")
+VOXA_USER_Q = int(os.environ.get("VOXA_USER_DAILY_CHARS", "4000"))
+VOXA_VOICES = {"sarah":"sarah (كل اللغات)","adrian":"adrian (كل اللغات)","yiyi":"yiyi","issam":"issam","huda":"huda","ads":"ads","amr":"amr","ghla":"ghla","egyptianm":"egyptianm (مصري)","yemenm":"yemenm (يمني)"}
+vusage = {"day": "", "u": {}}
+vsem = threading.Semaphore(2)
+def voxa_ok(uid, n):
+    d = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7200))
+    if vusage["day"] != d: vusage.update(day=d, u={})
+    if not VOXA_KEY: return "off"
+    if VOXA_USER_Q and vusage["u"].get(uid, 0) + n > VOXA_USER_Q: return "user"
+    return None
+def voxa_add(uid, n): vusage["u"][uid] = vusage["u"].get(uid, 0) + n
+def voxa_tts(text, voice):
+    q = VOXA_URL + "?" + urllib.parse.urlencode({"text": text, "voice": voice, "key": VOXA_KEY})
+    last = None
+    with vsem:
+        for a in range(3):
+            try:
+                r = urllib.request.urlopen(urllib.request.Request(q, headers={"User-Agent": "futuretts/1.0"}), timeout=90).read().decode("utf-8", "replace")
+                out = b""
+                for line in r.splitlines():
+                    if line.startswith("data:"):
+                        try: j = json.loads(line[5:].strip())
+                        except Exception: continue
+                        if j.get("audio_base64"): out += base64.b64decode(j["audio_base64"])
+                if len(out) > 500 and out[:4] == b"OggS": return out, "audio/ogg"
+                last = "empty"
+            except Exception as e: last = str(e)
+            time.sleep(1.5)
+    raise RuntimeError(last)
+def vox_kb(lang):
+    its=[{"text":lab,"callback_data":"v:v:"+k} for k,lab in VOXA_VOICES.items()]
+    return {"inline_keyboard":kb_rows(its,2)+[[{"text":"رجوع لأصوات اللغة","callback_data":"L:"+lang}]]}
 def groq_ok(uid, n):
     d = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 7200))
     if gusage["day"] != d: gusage.update(day=d, u={}, g=0)
@@ -437,7 +475,7 @@ def one_chunk(c, vid, style, allow_fb, own=None):
 def speak(chat_id, uid, text, mid):
     s = st(uid)
     text = text.strip()
-    cs = chunks(text[:MAXTOTAL], 190 if s["voice"].startswith("q:") else MAXCH)
+    cs = chunks(text[:MAXTOTAL], 190 if s["voice"].startswith("q:") else 200 if s["voice"].startswith("v:") else MAXCH)
     if len(text) > MAXTOTAL:
         tg("sendMessage", chat_id=chat_id, text=f"النص طويل، هحول أول {MAXTOTAL} حرف بس.", reply_to_message_id=mid)
     if len(cs) > 2:
@@ -477,6 +515,21 @@ def speak(chat_id, uid, text, mid):
             except Exception:
                 items = []; vid = edge_fallback(s)
                 tg("sendMessage", chat_id=chat_id, text=("مفتاحك في ElevenLabs مش شغال، راجع المفتاح من /keys، وحولت بصوت Edge." if ux else "أصوات ElevenLabs مش متاحة دلوقتي، هحول بصوت Edge."), reply_to_message_id=mid)
+    elif vid.startswith("v:"):
+        why = voxa_ok(uid, total)
+        if why:
+            vid = edge_fallback(s)
+            tg("sendMessage", chat_id=chat_id, text=("خلص رصيدك اليومي من أصوات VoxFlow، فهحول بصوت Edge المجاني. الرصيد بيتجدد بكرة." if why == "user" else "أصوات VoxFlow مش متاحة دلوقتي، هحول بصوت Edge المجاني."))
+            cs = chunks(text[:MAXTOTAL])
+        else:
+            try:
+                for c in cs:
+                    tg("sendChatAction", chat_id=chat_id, action="record_voice")
+                    items.append(voxa_tts(c, vid[2:]))
+                voxa_add(uid, total)
+            except Exception:
+                items = []; vid = edge_fallback(s); cs = chunks(text[:MAXTOTAL])
+                tg("sendMessage", chat_id=chat_id, text="أصوات VoxFlow مش متاحة دلوقتي (السيرفر بتاعها مجاني وممكن يقف)، حولت بصوت Edge.")
     elif vid.startswith("g:"):
         ug = ukey(uid, "g")
         why = None if ug else gem_ok(uid, total)
@@ -492,8 +545,10 @@ def speak(chat_id, uid, text, mid):
         if counted: gem_add(uid, total)
         if gcount: groq_add(uid, total)
         if ecount: eleven_add(uid, total)
-        kinds = {("mp3" if "mpeg" in m else "pcm" if (r[:4] != b"RIFF") else "wav") for r, m in items}
-        if kinds == {"mp3"}:
+        kinds = {("mp3" if "mpeg" in m else "ogg" if r[:4] == b"OggS" else "pcm" if (r[:4] != b"RIFF") else "wav") for r, m in items}
+        if kinds == {"ogg"}:
+            data = merge_ogg([r for r, m in items]); ext = "ogg"; ct = "audio/ogg"
+        elif kinds == {"mp3"}:
             data = b"".join(r for r, m in items); ext = "mp3"; ct = "audio/mpeg"
         elif kinds == {"pcm"} and len({m for r, m in items}) == 1:
             data = to_ogg(b"".join(r for r, m in items), items[0][1]); ext = "ogg"; ct = "audio/ogg"
@@ -608,12 +663,14 @@ def on_cb(q):
         tg("sendMessage", chat_id=chat_id, text={"g": "تم مسح مفتاح Gemini بتاعك، رجع البوت لمفاتيحه العامة.", "q": "تم مسح مفتاح Groq بتاعك، رجع البوت لمفتاحه العام."}.get(eng, "تم مسح مفتاح ElevenLabs بتاعك، رجع البوت لمفتاحه العام."))
     elif d.startswith("Q:") and (GROQ_KEYS or ukey(uid,"q")) and d[2:] in GROQ_VOICES:
         show(chat_id, "أصوات Groq (رصيدها اليومي صغير، ولما يخلص بحول بصوت Edge):", groq_kb(d[2:]), q)
+    elif d.startswith("V:") and VOXA_KEY:
+        show(chat_id, "أصوات VoxFlow الطبيعية. الأصوات سارة وأدريان لكل اللغات، والباقي عربي، ومصري ويمني. لو الخدمة وقفت بحول بصوت Edge:", vox_kb(d[2:]), q)
     elif d.startswith("X:") and (ELEVEN_KEYS or ukey(uid,"x")):
         show(chat_id, "أصوات ElevenLabs (رصيدها اليومي صغير جدًا، ولما يخلص بحول بصوت Edge):", eleven_kb(d[2:]), q)
     elif d == "chv":
         l = cur_lang(uid)
         show(chat_id, f"اختار الصوت للغة {LANGNAMES.get(l,l)}:", voice_kb(l, uid), q)
-    elif d.startswith("v:") and ((d[2:4]=="q:" and d[4:].split("-",1)[0] in GROQ_VOICES and d[4:].split("-",1)[-1] in GROQ_VOICES[d[4:].split("-",1)[0]][1]) or (d[2:4]=="x:" and d[4:] in ELEVEN_VOICES) or (d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="e:" and d[4:] in EDGE)):
+    elif d.startswith("v:") and ((d[2:4]=="q:" and d[4:].split("-",1)[0] in GROQ_VOICES and d[4:].split("-",1)[-1] in GROQ_VOICES[d[4:].split("-",1)[0]][1]) or (d[2:4]=="x:" and d[4:] in ELEVEN_VOICES) or (d[2:4]=="g:" and d[4:] in VOICES) or (d[2:4]=="v:" and d[4:] in VOXA_VOICES and VOXA_KEY) or (d[2:4]=="e:" and d[4:] in EDGE)):
         s = st(uid); s["voice"] = d[2:]; s["chosen"] = True; save()
         show(chat_id, f"تم اختيار الصوت: {disp(d[2:])}\nدلوقتي ابعت النص اللي عايز تحوله لصوت. الاختيار ده هيفضل محفوظ للنصوص الجاية.", after_kb(), q)
     elif d.startswith("s:") and d[2:] in STYLES:
@@ -646,6 +703,7 @@ class H(BaseHTTPRequestHandler):
                 if hashlib.sha256(j.get("tok","").encode()).hexdigest() != "4acaef2d75949589e072e0ec2460580944f15dc4457ed25e5a7efc8b506dce13": raise ValueError("auth")
                 if j.get("engine") == "q": raw, mime = groq_tts(j["text"], j.get("lang","ar"), j["voice"])
                 elif j.get("engine") == "x": raw, mime = eleven_tts(j["text"], j["voice"])
+                elif j.get("engine") == "v": raw, mime = voxa_tts(j["text"], j["voice"])
                 else: raw, mime = gemini_tts(j["text"], j["voice"], j.get("style",""))
                 self.send_response(200); self.send_header("X-Mime", mime or ""); self.end_headers(); self.wfile.write(raw)
             except Exception as e:

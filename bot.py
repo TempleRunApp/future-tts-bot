@@ -324,7 +324,8 @@ def groq_tts(text, lang, voice, own=None):
         try:
             return urllib.request.urlopen(r, timeout=90).read(), "audio/wav"
         except urllib.error.HTTPError as e:
-            last = str(e.code)
+            try: last = str(e.code) + ":" + e.read().decode()[:160]
+            except Exception: last = str(e.code)
             if e.code in (429, 403) and not own: _gi[0] += 1
         except Exception as e:
             last = str(e)

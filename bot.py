@@ -25,11 +25,35 @@ STYLES = {"normal":("عادي",""),"slow":("بطيء","speaking slowly"),"fast":
 
 state = {}  # uid -> {"voice","style"}
 SF = "state.json"
-try: state = json.load(open(SF))
-except Exception: pass
+SB_URL = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
+SB_KEY = os.environ.get("SUPABASE_KEY") or ""
+def sb_req(method, path, body=None, prefer=None):
+    if not SB_URL or not SB_KEY: return None
+    h = {"apikey": SB_KEY, "Authorization": "Bearer " + SB_KEY, "Content-Type": "application/json"}
+    if prefer: h["Prefer"] = prefer
+    r = urllib.request.Request(SB_URL + path, json.dumps(body).encode() if body is not None else None, h, method=method)
+    return urllib.request.urlopen(r, timeout=20)
+def load_state():
+    global state
+    if SB_URL and SB_KEY:
+        try:
+            r = sb_req("GET", "/rest/v1/kv?k=eq.state&select=v")
+            rows = json.loads(r.read().decode())
+            if rows and rows[0].get("v"):
+                state = json.loads(rows[0]["v"]); return
+        except Exception: pass
+    try: state = json.load(open(SF))
+    except Exception: pass
+load_state()
+_save_lock = threading.Lock()
 def save():
     try: json.dump(state, open(SF, "w"))
     except Exception: pass
+    if SB_URL and SB_KEY:
+        try:
+            with _save_lock:
+                sb_req("POST", "/rest/v1/kv", {"k": "state", "v": json.dumps(state)}, prefer="resolution=merge-duplicates,return=minimal")
+        except Exception: pass
 def st(uid):
     return state.setdefault(str(uid), {"voice":"g:Kore","style":"normal"})
 # ---- per-user API keys: encrypted at rest, bound to one user ----
